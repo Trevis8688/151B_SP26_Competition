@@ -3,3 +3,8 @@ results
 data
 __pycache__
 LICENSE
+
+# Large inference output files — download from Kaggle, don't commit
+experiments/**/*_responses.jsonl
+experiments/**/results.jsonl
+experiments/**/submission.csv
