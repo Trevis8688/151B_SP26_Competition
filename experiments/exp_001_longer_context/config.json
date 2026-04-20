@@ -1,15 +1,15 @@
 {
   "model_id": "Qwen/Qwen3-4B-Thinking-2507",
-  "max_tokens": 16384,
+  "max_tokens": 8192,
   "temperature": 0.6,
   "top_p": 0.95,
   "top_k": 20,
   "num_samples": 1,
   "split": "dev",
   "vllm": {
-    "max_model_len": 16384,
-    "max_num_seqs": 16,
-    "max_num_batched_tokens": 16384,
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
     "gpu_memory_utilization": 0.90
   },
   "notes": "Fix truncation: raise max_model_len so thinking model can finish before hitting context limit."
