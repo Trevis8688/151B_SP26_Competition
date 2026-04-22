@@ -1,4 +1,4 @@
-# Experiment: prompt_engineering
+# Experiment: boxed_enforcement
 
 **Date:** 2026-04-22
 **Baseline compared against:** exp_001_longer_context (Kaggle: 0.526)
