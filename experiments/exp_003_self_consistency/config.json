@@ -8,9 +8,9 @@
   "split": "dev",
   "vllm": {
     "max_model_len": 10240,
-    "max_num_seqs": 32,
-    "max_num_batched_tokens": 20480,
-    "gpu_memory_utilization": 0.90
+    "max_num_seqs": 16,
+    "max_num_batched_tokens": 10240,
+    "gpu_memory_utilization": 0.85
   },
   "notes": "Self-consistency: 5 samples per question, majority vote on boxed answer. Dev split first."
 }

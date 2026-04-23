@@ -13,8 +13,28 @@ Running 5 samples per question and taking the modal `\boxed{}` answer (self-cons
 - `split: dev` — validate on 200q first before committing to a full run
 - `max_tokens`: 8192 (corrected from template's 16384)
 
+## Run 1 — OOM crash (2026-04-23)
+
+Kaggle run failed at ~5.9 hours into the dev run with:
+```
+RuntimeError: CUDA out of memory. Tried to allocate 380.00 MiB.
+GPU 0 has a total capacity of 14.56 GiB of which 241.81 MiB is free.
+```
+
+**Root causes:**
+1. vLLM v0.19.1 runs the V1 engine by default and ignores `VLLM_USE_V1=0`. The V1 engine uses CUDA graph capture + Inductor compilation, adding ~1–2 GB VRAM overhead per GPU on top of model weights and KV cache.
+2. `n=5` with `max_tokens=8192` produces sequences up to 8,423 tokens; with `max_num_seqs=32` and `max_num_batched_tokens=20480` the KV cache filled GPU 0 completely.
+3. Memory fragmentation accumulated over 6 hours, making a 380 MiB allocation fail near the end of the run.
+
+**Fixes applied:**
+- `enforce_eager=True` added to `LLM()` — disables CUDA graph capture in V1 engine (~1–2 GB savings)
+- `PYTORCH_ALLOC_CONF=expandable_segments:True` added to env block before vllm import — reduces fragmentation
+- `max_num_seqs`: 32 → 16
+- `max_num_batched_tokens`: 20480 → 10240
+- `gpu_memory_utilization`: 0.90 → 0.85
+
 ## Dev results
-_Fill in after running analyze.py on results.jsonl (split=dev)._
+_Fill in after re-running with OOM fixes._
 
 | Metric | Baseline | This | Δ |
 |--------|---------:|-----:|---:|
