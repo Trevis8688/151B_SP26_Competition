@@ -11,19 +11,17 @@ Strengthening the system prompt to explicitly require ending with `\boxed{}` wil
 - `SYSTEM_PROMPT_MCQ`: added same enforcement + "Do not write anything after \boxed{}"
 - No few-shot examples (kept empty) — isolate prompt-format effect first
 
-## Dev results
-_Fill in after running analyze.py on results.jsonl (split=dev)._
+## Results
 
-| Metric | Baseline | This | Δ |
+| Metric | Baseline (exp_001) | This | Δ |
 |--------|---------:|-----:|---:|
-| Overall | | | |
-| MCQ | | | |
-| Free-form | | | |
-
-## Topic movers
-_Top 3 topics that improved / regressed._
+| Overall (local) | 3.14% | 3.05% | -0.09% |
+| Kaggle | 0.526 | 0.491 | -0.035 |
+| Has `\boxed{}` | 868/1126 (77%) | 764/1126 (68%) | -9% |
 
 ## Conclusion
 - [ ] Keep (merge into `main` prompt set)
-- [ ] Discard
+- [x] Discard
 - [ ] Needs variant — next experiment idea:
+
+Enforcement wording made things worse — missing_boxed increased from 23% to 32%. The stricter instruction disrupted the thinking model's CoT flow, causing more responses to never finish. Revert to exp_001 prompts as baseline.
