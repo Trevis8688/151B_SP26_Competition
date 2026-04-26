@@ -1,0 +1,16 @@
+{
+  "model_id": "Qwen/Qwen3-4B-Thinking-2507",
+  "max_tokens": 8192,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "num_samples": 1,
+  "split": "full",
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  },
+  "notes": "exp_004 MCQ fewshot kept; FEWSHOT_MATH adds 3 examples teaching multi-value format discipline (one box per gold value, no empty boxes). SYSTEM_PROMPT_MATH rewritten to forbid \\boxed{} on intermediate work and require N boxes for N values."
+}
