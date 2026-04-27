@@ -1,6 +1,8 @@
 .venv
 results
-data
+data/private.jsonl
+data/public.jsonl
+data/sample_submission.csv
 __pycache__
 LICENSE
 
