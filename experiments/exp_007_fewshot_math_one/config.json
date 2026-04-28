@@ -1,0 +1,16 @@
+{
+  "model_id": "Qwen/Qwen3-4B-Thinking-2507",
+  "max_tokens": 8192,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "num_samples": 1,
+  "split": "dev",
+  "notes": "One FEWSHOT_MATH example (series, symbolic answer). All else identical to exp_004.",
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  }
+}
