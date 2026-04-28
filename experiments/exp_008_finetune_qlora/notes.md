@@ -98,3 +98,36 @@ _Top 3 topics that improved / regressed._
 - [ ] Keep (merge into `main` prompt set)
 - [ ] Discard
 - [ ] Needs variant — next experiment idea:
+
+## Proposed next steps (further fine-tuning)
+
+Yes, more fine-tuning can be done after this run. The merged float16 model on HF and the saved LoRA adapter checkpoint (`/content/exp008_checkpoints/checkpoint-*/`) are both starting points. Listed in rough priority order:
+
+### 1. Self-distillation round 2 (highest expected gain)
+Run inference with the exp_008 model on the **full 1126-question public.jsonl**. Filter to correct responses — should be a substantially larger pool than the 623 from exp_004 (e.g., if exp_008 hits 60% local, ~675 examples; if 65%, ~730). Retrain a fresh QLoRA on `NuminaMath_5K + public_correct_v2`. This is the STaR / ReST loop — proven to compound across rounds for math reasoning.
+
+- New experiment slug: `exp_009_selfdistill_v2`
+- Same notebook structure, swap the public_responses file
+- Stop iterating when correct-pool size plateaus
+
+### 2. Topic-targeted oversampling
+Run `scripts/analyze.py` on exp_008 dev results. Whichever topics still fail (likely trig / number_theory / differential_eq based on exp_004 baseline), filter NuminaMath-CoT to those topics specifically and oversample (5K topic-targeted + 5K mixed).
+
+### 3. Continue training the existing adapter
+Cheaper than starting over if eval loss was still decreasing at end of run. Reload the last checkpoint with `FastLanguageModel.from_pretrained(checkpoint_path)`, train another 1-2 epochs on the same data — or on a fresh NuminaMath sample.
+
+### 4. Scale NuminaMath subset (15K-25K)
+If round 1 finished comfortably under the compute budget (e.g., < 45 min), scale up. With packing + seq=1024 + grad_checkpointing=False, 25K should be feasible in 2-3 hrs. Pair with rank bump to r=32 if the data scales up.
+
+### 5. DPO / preference fine-tuning
+Use `(correct_response, incorrect_response)` pairs from public.jsonl as a preference dataset. TRL's `DPOTrainer` runs on top of the SFT'd model. This nudges reasoning *style* (e.g., "always close with `\boxed{}`") rather than teaching new skills — well-suited if exp_008 has high knowledge but inconsistent format.
+
+### 6. Diversify data sources
+If gains plateau on NuminaMath: MetaMathQA, OpenMathInstruct-2, GSM8K, MATH train split. Mix at 70% in-distribution (NuminaMath + public correct) / 30% diversification to avoid catastrophic shift away from competition format.
+
+### Decision rule
+After exp_008 dev results land:
+- If dev >> 55.33% (e.g., 62%+): go to **(1) self-distillation** — bigger correct pool, compound the gain
+- If dev ≈ baseline but `\boxed{}` format rate improved: go to **(3) continue training** — undertrained on skills
+- If specific topics regressed: go to **(2) topic-targeted oversampling**
+- If stuck or noisy: go to **(5) DPO** to clean up format/style
