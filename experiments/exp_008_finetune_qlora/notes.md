@@ -16,6 +16,11 @@ QLoRA fine-tuning on Qwen3-4B using NuminaMath-CoT + self-generated correct resp
 - **Prompts:** exp_004 config unchanged (best MCQ few-shots, no math few-shots)
 - **Inference:** Merged float16 weights pushed to private HuggingFace repo → pulled on Kaggle T4 x2 via huggingface_hub, loaded with vLLM as usual
 
+## Notebook
+
+**Training notebook (Colab Pro A100):**
+https://colab.research.google.com/github/Trevis8688/151B_SP26_Competition/blob/exp/008_finetune_qlora/experiments/exp_008_finetune_qlora/train_colab.ipynb
+
 ## Plan & Progress
 
 ### Step 1 — Generate self-correct dataset from public.jsonl
