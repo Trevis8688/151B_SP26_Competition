@@ -1,10 +1,16 @@
 {
-  "model_id": "Qwen/Qwen3-4B-Thinking-2507",
-  "max_tokens": 16384,
+  "model_id": "TrevorDuong/qwen3-4b-math-qlora",
+  "max_tokens": 8192,
   "temperature": 0.6,
   "top_p": 0.95,
   "top_k": 20,
   "num_samples": 1,
   "split": "dev",
-  "notes": "Fill in hypothesis in notes.md before running."
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  },
+  "notes": "QLoRA fine-tuned Qwen3-4B (r=16, alpha=32, 5K NuminaMath-CoT + 623 public correct). Merged float16. Requires HF_TOKEN in Colab Secrets (private repo). Dev split only."
 }
