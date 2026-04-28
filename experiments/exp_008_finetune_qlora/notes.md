@@ -21,19 +21,31 @@ QLoRA fine-tuning on Qwen3-4B using NuminaMath-CoT + self-generated correct resp
 **Training notebook (Colab Pro A100):**
 https://colab.research.google.com/github/Trevis8688/151B_SP26_Competition/blob/exp/008_finetune_qlora/experiments/exp_008_finetune_qlora/train_colab.ipynb
 
+### Key hyperparams (Cell 2)
+
+| Param | Value | Rationale |
+|-------|-------|-----------|
+| MAX_SEQ_LENGTH | 1024 | Halved from 2048 — attention is O(n²); biggest single speedup |
+| NUMINAMATH_N | 5000 | Fits A100 compute budget (~25-75 min) |
+| TRAIN_BATCH_SIZE | 16 | No grad accumulation needed on 80GB — eliminates accum overhead |
+| GRAD_ACCUM_STEPS | 1 | Effective batch = 16 |
+| NUM_EPOCHS | 2 | 5K × 2 gives LoRA enough steps to converge on `<think>` format |
+| LEARNING_RATE | 2e-4 | Standard for QLoRA |
+
 ### What the notebook does (cell by cell)
 
 | Cell | What it does |
 |------|-------------|
 | 1 | Installs `unsloth`, `trl`, `datasets`, `bitsandbytes` |
-| 2 | Config variables — reads your HF token from Colab Secrets (`HF_TOKEN`), sets repo name, training hyperparams (r=16, 2 epochs, lr=2e-4) |
-| 3 | Loads Qwen3-4B in 4-bit quantization and wraps it with QLoRA adapters (only ~1% of params are trainable) |
+| 2 | Config variables — reads your HF token from Colab Secrets (`HF_TOKEN`), sets repo name, training hyperparams |
+| 3 | Loads Qwen3-4B in 4-bit quantization and wraps it with QLoRA adapters. `use_gradient_checkpointing=False` — 80GB A100 has VRAM headroom, avoids ~35% throughput tax |
 | 4 | Defines the system prompts — identical to exp_004 (best config found so far) |
 | 5 | Helper functions: `extract_boxed_and_reasoning()` splits a response into reasoning + final `\boxed{}`, and `make_messages()` formats it into the `<think>…</think>` structure Qwen3 expects |
-| 6 | Downloads NuminaMath-CoT from HuggingFace (`AI-MO/NuminaMath-CoT`), filters to examples with `\boxed{}` in the solution, samples 25K, and formats each one as a training example |
+| 6 | Downloads NuminaMath-CoT from HuggingFace (`AI-MO/NuminaMath-CoT`), filters to examples with `\boxed{}` in the solution, samples 5K, and formats each one as a training example |
 | 7 | Uploads 3 local files (prompted one at a time), then loads the 623 correct responses from exp_004 and formats them as training examples using the same `<think>` structure |
-| 8 | Combines both datasets (~25.6K total), shuffles, filters out examples longer than 2048 tokens, and builds a HuggingFace Dataset |
-| 9 | Runs SFT training with TRL's `SFTTrainer` — 2 epochs, effective batch size 16, cosine LR decay, ~1.5–2 hrs on A100 |
+| 8 | Combines both datasets (~5.6K total), shuffles, filters out examples longer than 1024 tokens, and builds a HuggingFace Dataset |
+| 8b | **Format sanity check** — prints a rendered training example alongside the inference-time prompt. Must visually confirm assistant continuation looks correct before burning compute |
+| 9 | Splits off 200 eval examples, then runs SFT training — 2 epochs, batch=16, bf16, cosine LR, eval every 50 steps to catch format bugs mid-training |
 | 10 | Merges the LoRA adapter back into the base model weights and saves as float16 (~8GB) — this is what vLLM will load |
 | 11 | Pushes the merged model to a private HuggingFace repo for use on Kaggle |
 
