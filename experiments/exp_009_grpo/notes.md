@@ -25,7 +25,7 @@ GRPO fine-tuning on Qwen3-4B-Thinking-2507 using public.jsonl as reward signal w
 ## Notebook
 
 **Training notebook (Colab Pro A100 80GB required):**
-`experiments/exp_009_grpo/train_grpo.ipynb`
+https://colab.research.google.com/github/Trevis8688/151B_SP26_Competition/blob/exp/009_grpo/experiments/exp_009_grpo/train_grpo.ipynb
 
 ### Pilot first
 Cell 2 has `PILOT_MODE = True` → runs on 50 prompts, ~30 min. **Verify the logged reward trends upward before flipping to full mode.** If reward is flat after the pilot, the reward signal is too sparse (mean ~0/8 per batch) and we need to either:
