@@ -10,7 +10,7 @@
     "max_model_len": 10240,
     "max_num_seqs": 32,
     "max_num_batched_tokens": 20480,
-    "gpu_memory_utilization": 0.90
+    "gpu_memory_utilization": 0.82
   },
   "notes": "QLoRA fine-tuned Qwen3-4B (r=16, alpha=32, 5K NuminaMath-CoT + 623 public correct). Merged float16. Requires HF_TOKEN in Colab Secrets (private repo). Dev split only."
 }
