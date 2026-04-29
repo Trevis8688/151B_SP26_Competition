@@ -8,9 +8,10 @@
   "split": "full",
   "vllm": {
     "max_model_len": 10240,
-    "max_num_seqs": 32,
-    "max_num_batched_tokens": 20480,
-    "gpu_memory_utilization": 0.90
+    "max_num_seqs": 16,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 1
   },
   "notes": "Pure replay of exp_004 (validated 55.33% local). split=full to bank a Kaggle submission. No prompt or param changes from exp_004."
 }
