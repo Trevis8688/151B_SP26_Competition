@@ -81,23 +81,38 @@ https://colab.research.google.com/github/Trevis8688/151B_SP26_Competition/blob/e
 
 ## Dev results
 
-_Fill in after running analyze.py on results.jsonl (split=dev)._
+> Note: exp_004 baseline is from the full 1,126-question public set; this run is on the 200-question dev split. Per-type deltas are still informative (stratified split).
 
-| Metric | Baseline (exp_004) | This (dev) | Δ |
-|--------|-------------------:|-----------:|---:|
-| Overall | 55.33% | | |
-| MCQ | 63.20% | | |
-| Free-form | 51.40% | | |
+| Metric | Baseline (exp_004, public) | This (dev) | Δ |
+|--------|---------------------------:|-----------:|---:|
+| Overall | 55.33% | 46.00% | −9.33pp |
+| MCQ | 63.20% | 41.00% | −22.20pp |
+| Free-form | 51.40% | 51.00% | −0.40pp |
+| missing_boxed | ~23% | 9.50% | −13.50pp ✓ |
+
+**Error buckets:** wrong_mcq 45 (22.5%), wrong_math 44 (22.0%), missing_boxed 19 (9.5%)
 
 ## Topic movers
 
-_Top 3 topics that improved / regressed._
+| Topic | Acc | n | Note |
+|-------|----:|--:|------|
+| differential_eq | 16.7% | 12 | Weakest |
+| linear_algebra | 25.0% | 4 | Small n |
+| number_theory | 29.4% | 17 | Weakest (meaningful n) |
+| calculus | 68.4% | 19 | Strongest |
 
 ## Conclusion
 
 - [ ] Keep (merge into `main` prompt set)
-- [ ] Discard
-- [ ] Needs variant — next experiment idea:
+- [x] Needs variant — next experiment idea:
+
+**Root cause:** MCQ collapsed (−22pp) because NuminaMath-CoT is free-form only — ~5K free-form examples with only ~200 MCQ in the self-correct dataset. Catastrophic forgetting on MCQ letter-selection format. Free-form is flat (fine-tuning improved `\boxed{}` format rate but not reasoning skill).
+
+**What worked:** `missing_boxed` halved from ~23% → 9.5% — formatting objective achieved.
+
+**Next steps (in priority order):**
+1. **Hybrid routing (no retraining):** route MCQ → exp_004 base model (63.2% MCQ), free-form → exp_008 fine-tuned. Highest-EV leaderboard move.
+2. **Continue training with MCQ data:** add ~237 correct MCQ responses from exp_004 to training data, retrain adapter 1–2 more epochs to patch catastrophic forgetting.
 
 ## Proposed next steps (further fine-tuning)
 
