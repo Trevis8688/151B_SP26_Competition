@@ -10,3 +10,5 @@ LICENSE
 experiments/**/*_responses.jsonl
 experiments/**/results.jsonl
 experiments/**/submission.csv
+experiments/**/raw_outputs*.jsonl
+experiments/**/difficulty_samples*.jsonl
