@@ -1,7 +1,7 @@
 # Experiment: grpo
 
 **Started:** 2026-04-28
-**Status (as of 2026-05-04):** Phase 1 complete, Phase 1B in progress, Phase 2 (training) pending
+**Status (as of 2026-05-04):** Phase 1 complete, Phase 1B complete (196 sweet-spot prompts), Phase 2 (training) ready to run
 **Baseline:** exp_004_fewshot_prompts (local 55.33%, Kaggle 0.551)
 
 ## Hypothesis (unchanged)
@@ -18,9 +18,9 @@ GRPO fine-tuning on Qwen3-4B-Thinking-2507 using public.jsonl as reward signal w
 - Train end-to-end in a single Colab session
 
 ### Current plan (2026-05-03+)
-1. **Phase 1** ✅ DONE (2026-05-03): Pre-sample base model on all 926 prompts × 4 samples to characterize per-prompt difficulty (vLLM, A100, ~1.5 hr)
-2. **Phase 1B** 🔄 IN PROGRESS (2026-05-04): Resample 261 length-clipped prompts at `max_tokens=8192` to recover them (~45-60 min A100)
-3. **Phase 2** 📋 PENDING: GRPO training filtered to sweet-spot prompts only
+1. **Phase 1** ✅ DONE (2026-05-03): Pre-sample base model on all 926 prompts × 4 samples to characterize per-prompt difficulty (vLLM, A100, ~1.5 hr) → 147 sweet-spot prompts
+2. **Phase 1B** ✅ DONE (2026-05-04): Resample 261 length-clipped prompts at `max_tokens=8192` (~1h40 A100) → 49 additional sweet-spot prompts recovered
+3. **Phase 2** 🔄 READY: GRPO training filtered to **196 sweet-spot prompts** (Cell 6 of `train_grpo.ipynb` filters via `sweet_spot_ids.json` when `USE_CURRICULUM=True`)
 
 ### Why the pivot
 Three independent GRPO gotchas surfaced during pilot debugging — all silent failures producing zero learning:
@@ -59,20 +59,43 @@ Three independent GRPO gotchas surfaced during pilot debugging — all silent fa
 
 **Mean per-sample accuracy:** 42.3% (vs dev's 55.33% — gap is `T=1.0` exploration vs `T=0.6` eval).
 
-## Phase 1B (in progress, 2026-05-04)
-
-**Goal:** Resample the 261 length-clipped prompts at `max_tokens=8192` to recover legitimately-solvable ones.
+## Phase 1B results (resampling at 8192 tokens, 2026-05-04)
 
 **Setup:** Same vLLM/Qwen3 config as Phase 1, but:
 - `MAX_COMPLETION_LEN=8192` (2× Phase 1)
 - `VLLM_MAX_NUM_SEQS=16` (halved from 32 to fit 2× KV cache on 40GB)
-- **NO judging in the notebook** — Phase 1's inline judging hung overnight on pathological LaTeX (sympy infinite loop). Phase 1B dumps raw vLLM outputs and is scored locally afterward via `scripts/score_raw_outputs.py` (per-call SIGALRM timeout = 15 sec).
+- **NO judging in the notebook** — Phase 1's inline judging hung overnight on pathological LaTeX (sympy infinite loop). Phase 1B dumps raw vLLM outputs; scored locally afterward via `scripts/score_raw_outputs.py` with per-call SIGALRM timeout (15s).
 
-**Expected outcome:** Recover ~100–150 additional sweet-spot prompts → ~250–280 total training set.
+**Phase 1B distribution (261 resampled prompts):**
 
-## Phase 2: GRPO training (planned, after Phase 1B)
+| Bucket | Count | % | Interpretation |
+|---|---:|---:|---|
+| 0/4 | 193 | 73.9% | Still wrong (109 still all-clipped at 8192!) |
+| 1/4 | 27 | 10.3% | Sweet spot |
+| 2/4 | 10 | 3.8% | Sweet spot |
+| 3/4 | 12 | 4.6% | Sweet spot |
+| 4/4 | 19 | 7.3% | Easy after all — model just needed >4096 budget |
+| **Sweet (1–3)** | **49** | **18.8%** | **+49 to training set** |
 
-Train on sweet-spot IDs only (147 from Phase 1 + recovered prompts from Phase 1B). With ~250 prompts (vs original 926), each epoch is ~3× shorter and every batch contributes gradient (no wasted uniform-reward steps). Plan: 1–3 epochs depending on reward trajectory.
+**Of the 261 resampled:** 109 are STILL all-clipped at 8192 — some problems genuinely need 12K+ tokens. 84 finished thinking but were just wrong. 49 became sweet-spot. 19 became always-correct (would have been fine at 4096 with more luck).
+
+**Local scoring stats:** 1044 completions, 0 timeouts, 159 (15.2%) correct. SIGALRM safety net wasn't triggered — Phase 1's hang was a fluke that the timeout would have caught anyway.
+
+**Final merged training set: 196 sweet-spot prompts** (up from 147 Phase 1 only)
+- 80 MCQ + 116 free-form
+- ~33% larger than Phase 1 alone
+
+## Phase 2: GRPO training (ready to run)
+
+`train_grpo.ipynb` Cell 6 now filters the dataset to `sweet_spot_ids.json` when `USE_CURRICULUM=True` (default). Cell 4 uploads `sweet_spot_ids.json` alongside the other files.
+
+**Training math (full mode, 196 prompts):**
+- Steps/epoch: 196 / (batch 1 × accum 4) = **49 grad steps**
+- Time/step: ~5 min on A100 with HF backend
+- **~4 hours per epoch** — fits in one Colab Pro+ session
+- Plan: 1 epoch first, see if reward trends up + dev eval improves; expand to 2-3 epochs if so
+
+**Pilot smoke test first:** `PILOT_MODE=True, PILOT_N=20` for ~30 min sanity check before committing to the full 4 hr.
 
 ## Critical learnings (saved to user memory)
 
@@ -98,9 +121,10 @@ experiments/exp_009_grpo/
 ├── length_clipped_ids.json        261 IDs to resample in Phase 1B (uniform-0, all clipped)
 │
 ├── difficulty_samples.jsonl       (gitignored, ~30MB) Phase 1 scored output, 926 records
+├── difficulty_samples_long.jsonl  (gitignored, ~21MB) Phase 1B scored locally, 261 records
+├── difficulty_samples_merged.jsonl (gitignored, ~31MB) Phase 1+1B merged — final source of truth
 ├── raw_outputs.jsonl              (gitignored, ~30MB) Phase 1 raw vLLM completions backup
-├── raw_outputs_long.jsonl         (gitignored) Phase 1B raw outputs — produced after Cell 7
-└── difficulty_samples_long.jsonl  (gitignored) Phase 1B scored locally
+└── raw_outputs_long.jsonl         (gitignored, ~21MB) Phase 1B raw vLLM completions backup
 ```
 
 Related (outside the experiment folder):
