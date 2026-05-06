@@ -4,6 +4,9 @@
 **Status (as of 2026-05-04):** Phase 1 complete, Phase 1B complete (196 sweet-spot prompts), Phase 2 (training) ready to run
 **Baseline:** exp_004_fewshot_prompts (local 55.33%, Kaggle 0.551)
 
+**Training notebook (GitHub):** https://github.com/Trevis8688/151B_SP26_Competition/blob/exp/009_grpo/experiments/exp_009_grpo/train_grpo.ipynb
+**Open in Colab:** https://colab.research.google.com/github/Trevis8688/151B_SP26_Competition/blob/exp/009_grpo/experiments/exp_009_grpo/train_grpo.ipynb
+
 ## Hypothesis (unchanged)
 
 GRPO fine-tuning on Qwen3-4B-Thinking-2507 using public.jsonl as reward signal will push accuracy beyond the prompt-engineering ceiling (~55%) by training the model to discover correct reasoning paths. Unlike SFT (which only imitates correct solutions), GRPO generates multiple responses per question and reinforces the ones that produce correct `\boxed{}` answers, allowing improvement on problems the base model currently fails.
