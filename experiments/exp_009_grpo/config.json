@@ -1,10 +1,16 @@
 {
-  "model_id": "Qwen/Qwen3-4B-Thinking-2507",
-  "max_tokens": 16384,
+  "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
+  "max_tokens": 8192,
   "temperature": 0.6,
   "top_p": 0.95,
   "top_k": 20,
   "num_samples": 1,
-  "split": "dev",
-  "notes": "Fill in hypothesis in notes.md before running."
+  "split": "full",
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  },
+  "notes": "GRPO fine-tune of Qwen3-4B-Thinking-2507 on path-C strict 70-prompt curriculum. Adapter from checkpoint-56 (step 56/70 of 17-update epoch, run aborted at 80% by Drive-full bug). Merged fp16 model pushed to TrevorDuong/qwen3-4b-thinking-grpo-strict70. Inference settings match exp_004 baseline (T=0.6, max_tokens=8192, vLLM max_model_len=10240) for apples-to-apples comparison."
 }
