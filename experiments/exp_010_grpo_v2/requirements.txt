@@ -1,0 +1,20 @@
+# GRPO v2 deps on top of scipy-ml-notebook:stable.
+# Pinned to versions verified on exp_009 Colab run (CUDA 12.4 stack).
+# If torch is already present and CUDA-correct, the pip install is a no-op for torch.
+
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+bitsandbytes>=0.46.1
+trl==0.21.0
+peft
+accelerate
+transformers
+datasets
+huggingface_hub
+
+# Judger deps (already in my-virtenv; re-install for the container)
+sympy
+antlr4-python3-runtime==4.11

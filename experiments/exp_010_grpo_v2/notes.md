@@ -46,11 +46,11 @@ DSMLP gotchas (from the IT services KB doc):
 
 ## Plan
 
-### Phase 0 — DSMLP onboarding (not yet started)
-1. SSH into `dsmlp-login.ucsd.edu`, confirm access
-2. Check available GPU types via `kubectl get nodes -o wide` or DataHub status page
-3. Build a custom Docker image with torch + TRL + PEFT + vLLM pre-installed (avoids the Colab install-cascade pain) — push to user's dockerhub
-4. Sanity check: 30-min pilot job that loads Qwen3-4B + does 5 GRPO steps
+### Phase 0 — DSMLP onboarding (in progress)
+1. ✅ SSH into `dsmlp-login.ucsd.edu` (works for user `trduong`, Duo every 8h)
+2. GPU survey — `kubectl get nodes` is blocked for students; check DataHub status page in browser
+3. ❌ Custom Docker image — **skipped**. Stock `scipy-ml-notebook:stable` + pip install our deps is simpler for this use case
+4. Pilot: 5-step GRPO smoke test via `pilot.py` (~20 min) — see `dsmlp_runbook.md` §0.3
 
 ### Phase 1 — Full training
 1. `launch.sh -g 1 -v <best_avail> -m 32 -B -- python train_grpo_v2.py`
@@ -63,20 +63,24 @@ DSMLP gotchas (from the IT services KB doc):
 2. Score locally on public.jsonl, compare vs exp_009
 3. Submit to Kaggle if local ≥ exp_009 baseline
 
-## Files (current scaffold)
+## Files
 
 ```
 experiments/exp_010_grpo_v2/
 ├── notes.md                    This file
 ├── config.json                 Training hyperparams (not Kaggle inference config — that comes later)
 ├── prompts.py                  Copy of exp_009 prompts (must match for distribution alignment)
-└── train_grpo_v2.py            TODO: convert exp_009 train_grpo.ipynb → script
+├── sweet_spot_ids.json         196 curriculum IDs (Phase 1 + 1B sweet-spot)
+├── train_grpo_v2.py            Real training script (ported from exp_009/train_grpo.ipynb)
+├── pilot.py                    5-step sanity check — run before the 12hr batch
+├── requirements.txt            pip deps on top of scipy-ml-notebook:stable
+└── dsmlp_runbook.md            launch.sh playbook + monitoring + recovery
 ```
 
-When ready to run, also add:
-- `sweet_spot_ids.json` (copy from exp_009; 196 prompts)
-- `Dockerfile` for DSMLP custom image
-- `dsmlp_runbook.md` for the actual launch commands
+Decision: **no custom Docker image.** DSMLP's stock `scipy-ml-notebook:stable`
+already has torch + scipy stack; we install GRPO deps (`trl`, `peft`, `bitsandbytes`)
+via `pip install -r requirements.txt` inside the container. Custom Docker only
+needed if we run >5 jobs and install time becomes a bottleneck.
 
 ## Risks / open questions
 
