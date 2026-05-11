@@ -1,0 +1,16 @@
+{
+  "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
+  "max_tokens": 8192,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "num_samples": 3,
+  "split": "full",
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 12,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  },
+  "notes": "Best-of-N on top of exp_009 GRPO model. NUM_SAMPLES=3 at T=0.6 — notebook's majority_vote picks the modal boxed answer per question. Attacks 16.3% missing_boxed failures (one of 3 samples likely emits a proper box). max_num_seqs dropped 32→12 to fit 3x KV cache on T4 x2. Expected runtime ~6-8 hr on T4 x2; if it overruns the 9hr Kaggle limit, drop to num_samples=2."
+}
