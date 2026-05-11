@@ -1,0 +1,20 @@
+{
+  "_comment": "Stage 2 boxed-rescue config. Stage 1 is whatever upstream experiment (exp_009 or exp_011) produced the input. Stage 2 runs only on missing-boxed responses.",
+  "stage1_input_files": [
+    "experiments/exp_011_best_of_n/public_responses.jsonl",
+    "experiments/exp_011_best_of_n/private_responses.jsonl"
+  ],
+  "stage2": {
+    "model_id": "Qwen/Qwen3-4B-Thinking-2507",
+    "max_tokens": 512,
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_input_tokens_from_stage1": 3000,
+    "_note": "Keep only the last 3000 tokens of the stage-1 response (where the conclusion lives) to fit the rescue prompt + question in context."
+  },
+  "output_files": [
+    "experiments/exp_012_boxed_rescue/public_responses.jsonl",
+    "experiments/exp_012_boxed_rescue/private_responses.jsonl"
+  ]
+}
