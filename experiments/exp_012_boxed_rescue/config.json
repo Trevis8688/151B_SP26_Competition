@@ -1,20 +1,21 @@
 {
-  "_comment": "Stage 2 boxed-rescue config. Stage 1 is whatever upstream experiment (exp_009 or exp_011) produced the input. Stage 2 runs only on missing-boxed responses.",
-  "stage1_input_files": [
-    "experiments/exp_011_best_of_n/public_responses.jsonl",
-    "experiments/exp_011_best_of_n/private_responses.jsonl"
-  ],
-  "stage2": {
+  "_comment": "Stage-2 boxed-rescue config. Generic — the rescue_notebook.ipynb at repo root reads this. To rescue a different upstream experiment, change source_experiment + stage1_dataset_name and re-run.",
+  "source_experiment": "exp_009_grpo",
+  "stage1_dataset_name": "exp-009-grpo-responses",
+  "rescue": {
     "model_id": "Qwen/Qwen3-4B-Thinking-2507",
-    "max_tokens": 512,
+    "max_tokens": 2048,
     "temperature": 0.1,
     "top_p": 0.95,
     "top_k": 20,
-    "max_input_tokens_from_stage1": 3000,
-    "_note": "Keep only the last 3000 tokens of the stage-1 response (where the conclusion lives) to fit the rescue prompt + question in context."
+    "max_input_tokens_from_stage1": 3000
   },
-  "output_files": [
-    "experiments/exp_012_boxed_rescue/public_responses.jsonl",
-    "experiments/exp_012_boxed_rescue/private_responses.jsonl"
-  ]
+  "vllm": {
+    "max_model_len": 8192,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  },
+  "notes": "Stage-2 model: base Qwen3-Thinking-2507 (not GRPO — generalizes to any upstream experiment). T=0.1 = near-deterministic extraction. max_tokens=2048 gives thinking model room to think before emitting boxed answer. Rescue candidates = responses with no \\boxed substring anywhere (matches analyze.py's missing_boxed bucket)."
 }

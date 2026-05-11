@@ -57,26 +57,44 @@ For free-form: the instruction says `\boxed{value}` (matching the system prompt)
 
 ## Implementation
 
-The current Kaggle notebook doesn't support two-stage inference natively. Options:
+**Runs entirely on Kaggle via `rescue_notebook.ipynb`** (at repo root, alongside `cse151b-notebook.ipynb`). The notebook is generalized — change one variable (`RESCUE_EXPERIMENT`) and the experiment's `config.json` declares which upstream source to rescue. Reusable for any future experiment with `missing_boxed` failures.
 
-**Option A (cleaner, more work):** modify `cse151b-notebook.ipynb` to run a stage-2 pass over missing-boxed responses.
+### How to run (one-time setup)
 
-**Option B (faster scaffold, recommended):** post-process locally.
-1. Run exp_011 (best-of-N) on Kaggle as-is — generates `public_responses.jsonl` and `private_responses.jsonl`
-2. Download both files
-3. Run a local stage-2 script (`scripts/boxed_rescue.py`) that: (a) finds missing-boxed responses, (b) ships them through HF Inference API or local Qwen3-4B for stage 2, (c) merges results back
-4. Rebuild `submission.csv` from the rescued `private_responses.jsonl`
+1. **Upload stage-1 outputs as a Kaggle dataset.** From local repo:
+   ```bash
+   mkdir -p /tmp/exp009-responses && cd /tmp/exp009-responses
+   cp ~/CSE151B/151B_SP26_Competition/experiments/exp_009_grpo/public_responses.jsonl .
+   cp ~/CSE151B/151B_SP26_Competition/experiments/exp_009_grpo/private_responses.jsonl .
+   cat > dataset-metadata.json <<EOF
+   {"title": "exp_009_grpo responses", "id": "trevorduong/exp-009-grpo-responses", "licenses": [{"name": "CC0-1.0"}]}
+   EOF
+   KAGGLE_API_TOKEN="..." ~/miniconda3/bin/kaggle datasets create -p .
+   ```
 
-**Caveat for option B:** stage 2 inference happens off-Kaggle, which means we need a way to run Qwen3-4B locally or via API. RTX 3060 (12GB) can fit Qwen3-4B in 4-bit quant for inference — fine for ~183 short generations.
+2. **Create a new Kaggle notebook** importing `rescue_notebook.ipynb` from the GitHub repo (or upload manually). Attach inputs:
+   - `cse-151-b-spring-2026-competition` (competition data)
+   - `trevorduong/151b-experiments` (auto-pulls from main branch, contains exp_012 config)
+   - `trevorduong/exp-009-grpo-responses` (the dataset created in step 1)
+   - GPU: **T4 x2**
+
+3. **Save Version → Save & Run All** — ~45 min total. Downloads `submission.csv` from output panel.
+
+### Detection logic
+
+Mirrors `analyze.py` exactly: a response "needs rescue" iff `"\\boxed" not in response.response`. This matches the 183 `missing_boxed` count from the scorer's bucket. We do NOT try to rescue responses that already have *some* boxed (even if wrong) — that would risk overwriting a correct extraction with a worse one.
+
+### Merge strategy
+
+Successful rescues are **appended** (not replaced) onto the original response, prefixed with `[RESCUE EXTRACTION]:`. The judger picks up the new box; the original CoT stays for human review. Failed rescues (where stage-2 also didn't emit `\boxed`) leave the original untouched — net effect on score 0.
 
 ## Runtime estimate
 
-- Stage 1 (Kaggle): same as exp_011 (~6-8 hr if N=3)
-- Stage 2 (local RTX 3060 in 4-bit): ~183 questions × ~10 sec/q = ~30 min
+- Model load: ~10 min (same as stage-1)
+- Rescue inference: ~200 candidates × short generations (max 2048 tokens, T=0.1) ≈ **20-30 min**
+- Total: **~45 min**, well under Kaggle 9hr session cap
 
-So total: <1 day end-to-end if exp_011 already ran.
-
-**Dependency:** exp_012 should run *on top of* exp_011 (best-of-N already reduces missing_boxed below 16.3% by giving 3 shots at producing a box). Run exp_011 first, then apply rescue to whatever's left.
+Independent of exp_011 — runs directly on exp_009 outputs.
 
 ## Dev results
 
@@ -101,10 +119,20 @@ _Fill in after stage 2 runs on exp_011's missing-boxed cases._
 ```
 experiments/exp_012_boxed_rescue/
 ├── notes.md       This file
-├── config.json    Stage 2 sampling config
-├── prompts.py     Stage 2 prompt template (extraction-only)
-└── (planned) scripts/boxed_rescue.py   Stage 2 post-process script
+├── config.json    source_experiment + stage1_dataset_name + rescue/vllm params
+└── prompts.py     RESCUE_SYSTEM_PROMPT_MATH/MCQ + build_rescue_user_message()
 ```
+
+Generic notebook lives at repo root:
+```
+rescue_notebook.ipynb   Reads exp_NNN/config.json for source_experiment + stage1_dataset_name
+```
+
+## Stage-2 model decision
+
+**Base `Qwen/Qwen3-4B-Thinking-2507`**, not the GRPO model. Reason: the rescue tool is meant to be reusable for any future experiment. The base is the "common denominator" that works regardless of which model produced the upstream output. The extraction task (read partial reasoning → emit one boxed answer) is simple enough that GRPO's reasoning gains don't apply here.
+
+If a future experiment shows the GRPO model is meaningfully better at rescue, override via `rescue.model_id` in config.json — no notebook changes needed.
 
 ## Conclusion
 - [ ] Keep
