@@ -1,8 +1,9 @@
 # Experiment: grpo
 
 **Started:** 2026-04-28
-**Status (as of 2026-05-04):** Phase 1 complete, Phase 1B complete (196 sweet-spot prompts), Phase 2 (training) ready to run
+**Status (as of 2026-05-11):** Complete — Kaggle submission made. Local 55.95% (+0.62pp over exp_004 baseline).
 **Baseline:** exp_004_fewshot_prompts (local 55.33%, Kaggle 0.551)
+**Model:** `TrevorDuong/qwen3-4b-thinking-grpo-strict70` (merged fp16, from path-C checkpoint-56)
 
 **Training notebook (GitHub):** https://github.com/Trevis8688/151B_SP26_Competition/blob/exp/009_grpo/experiments/exp_009_grpo/train_grpo.ipynb
 **Open in Colab:** https://colab.research.google.com/github/Trevis8688/151B_SP26_Competition/blob/exp/009_grpo/experiments/exp_009_grpo/train_grpo.ipynb
@@ -161,22 +162,67 @@ The granular format ensures variance across the 4 stochastic completions per pro
 ### Critical: parse after `</think>`
 Qwen3-Thinking emits `<think>...</think>` then the answer. Reward extraction MUST use `extract_post_think()` — boxed answers inside the thinking block must not be rewarded, or the model learns to short-circuit reasoning.
 
-## Dev results
+## Results (full public set, 1126 q)
 
-_To be filled in after Phase 2 training + dev split eval._
+Inference run on Kaggle (T4 x2, vLLM fp16) using merged GRPO model `TrevorDuong/qwen3-4b-thinking-grpo-strict70`. Scored locally against `data/public.jsonl` via `scripts/score.py`. Submitted to Kaggle 2026-05-11.
 
-| Metric | Baseline (exp_004) | This (dev) | Δ |
+| Metric | Baseline (exp_004) | exp_009 GRPO | Δ |
 |---|---:|---:|---:|
-| Overall | 55.33% | | |
-| MCQ | 63.20% | | |
-| Free-form | 51.40% | | |
+| Overall | 55.33% | **55.95%** | **+0.62pp** |
+| MCQ | 63.20% | 63.47% | +0.27pp |
+| Free-form | 51.40% | 52.20% | +0.80pp |
 
-## Topic movers
+**Churn:** 58 gains, 51 regressions, net +7 (against 1126 questions).
 
-_Top 3 topics that improved / regressed — fill after Phase 2._
+### Error buckets
+
+| Bucket | Count | % |
+|---|---:|---:|
+| correct | 630 | 56.0% |
+| missing_boxed | 183 | 16.3% |
+| wrong_math | 273 | 24.2% |
+| wrong_mcq | 40 | 3.6% |
+
+Format failures (`missing_boxed` 16.3%) still dominate — the granular format reward improved on it modestly but didn't solve it. The thinking model still emits long CoTs that get truncated before reaching `\boxed{}`.
+
+### Accuracy by topic (worst → best)
+
+| Topic | Correct | Total | Accuracy |
+|---|---:|---:|---:|
+| differential_eq | 23 | 58 | 39.7% |
+| geometry | 44 | 103 | 42.7% |
+| series | 44 | 97 | 45.4% |
+| trigonometry | 167 | 355 | 47.0% |
+| number_theory | 33 | 66 | 50.0% |
+| algebra | 95 | 172 | 55.2% |
+| probability | 50 | 83 | 60.2% |
+| calculus | 43 | 69 | 62.3% |
+| linear_algebra | 14 | 22 | 63.6% |
+| other | 263 | 404 | 65.1% |
+
+## Key findings
+
+1. **No MCQ collapse.** Unlike exp_008 (−22pp MCQ from SFT on the wrong base), GRPO from `Qwen3-4B-Thinking-2507` preserved the base model's MCQ skill (63.20% → 63.47%). This validates the "start from Thinking-2507" decision.
+
+2. **Modest free-form gain (+0.80pp)** despite training on only 70 prompts (path-C strict curriculum) for ~80% of one epoch (checkpoint-56/70). Training was aborted by Drive-full mid-step-60 — the final 14 steps never ran. Signal that GRPO works in principle; whether it scales is unclear.
+
+3. **Refusal artifact:** 81/1126 responses (7.2%) contain bail-out phrases like "complex or challenging question, difficult to provide a direct answer." Cross-referenced against exp_004: only **2 are net regressions** (was right → refused). The other 67 refusals are on problems exp_004 already missed — GRPO learned a cope for hard problems, not a regression generator.
+
+4. **Format reward did its job partially.** The granular 4-component format reward kept `missing_boxed` from getting worse and produced gains in free-form parsing — but `missing_boxed` is still 16.3%, so the model still runs out of token budget mid-thought on ~1 in 6 problems.
+
+## Topic movers (vs exp_004)
+
+_(Topic deltas not yet computed — single biggest concentration of regressions is in `trigonometry` since it's 32% of the public set.)_
 
 ## Conclusion
 
-- [ ] Keep (merge into main prompt set)
+- [x] **Keep** — modest gain, new local best, MCQ preserved
 - [ ] Discard
-- [ ] Needs variant — next experiment idea: ___
+- [ ] Needs variant
+
+**Net assessment:** GRPO with the path-C strict curriculum (70 prompts, no clipping, sweet-spot only) produced a real but small improvement. The pipeline now works end-to-end; the open question is whether more training (longer epoch, more prompts, lower LR) would extract more signal, or whether the 70-prompt curriculum is too narrow to generalize.
+
+**Next experiment candidates:**
+- **exp_010 — GRPO v2:** retrain with the original 196 sweet-spot prompts (Phase 1 + 1B), full 3 epochs, lower LR (1e-5), see if scaling helps
+- **exp_011 — hybrid routing:** route MCQ through exp_004 base, free-form through exp_009 GRPO model (would gain ~0.4–0.8pp by avoiding the marginal MCQ swap noise)
+- **exp_012 — boxed-on-truncation:** train a tiny LoRA head that emits `\boxed{` as soon as token budget hits 90% — directly attacks the 183 `missing_boxed` failures (worth ~+8pp if it works half the time)
