@@ -46,11 +46,58 @@ DSMLP gotchas (from the IT services KB doc):
 
 ## Plan
 
-### Phase 0 — DSMLP onboarding (in progress)
-1. ✅ SSH into `dsmlp-login.ucsd.edu` (works for user `trduong`, Duo every 8h)
-2. GPU survey — `kubectl get nodes` is blocked for students; check DataHub status page in browser
-3. ❌ Custom Docker image — **skipped**. Stock `scipy-ml-notebook:stable` + pip install our deps is simpler for this use case
-4. Pilot: 5-step GRPO smoke test via `pilot.py` (~20 min) — see `dsmlp_runbook.md` §0.3
+### Phase 0 — DSMLP onboarding (paused 2026-05-11 — partial)
+1. ✅ SSH into `dsmlp-login.ucsd.edu` (user `trduong`, Duo every 8h)
+2. ✅ GPU menu surveyed via `launch.sh -h`: `1080 | 1080ti | 2080ti | a30 | a5000 | a100 | h100 | rtxtitan | l40s`. Default `launch.sh -g 1` (no `-v`) landed on **RTX 2070 / 8 GB — too small** for our settings. Must use `-v a5000` (24 GB Ampere, bf16, FA2) or fallback `-v a30`/`-v l40s`.
+3. ✅ Custom Docker image — **skipped**. Stock `scipy-ml-notebook:stable` + `pip install -r requirements.txt` works.
+4. ⏸ Pilot — **not yet run**. Scripts are pushed to main (commit `4d42c71`); resume by re-launching a5000 pod and running `pilot.py`.
+
+### Resume checklist (where to pick up next session)
+
+**Environment confirmed working:**
+- Pod image: `ghcr.io/ucsd-ets/scipy-ml-notebook:stable`
+- Pre-installed: torch 2.2.1+cu121, transformers 4.44.2, datasets 3.0.0, accelerate 0.34.2
+- Driver: 535.161.08 (CUDA 12.2 max); nvcc in container is 12.0
+- Disk: `/home/trduong` is 135 TB NFS with 80 TB free (plenty for checkpoints)
+- Decision: `requirements.txt` keeps cu124 pin → pip will reinstall torch (3–5 min)
+
+**To resume — exact commands:**
+```bash
+# 1. From local laptop
+ssh trduong@dsmlp-login.ucsd.edu
+
+# 2. On dsmlp-login (NOT inside a pod yet)
+launch.sh -g 1 -v a5000              # interactive, for pilot
+# wait until prompt changes to trduong@trduong-XXXXX
+
+# 3. Inside the pod
+cd ~
+git clone https://github.com/Trevis8688/151B_SP26_Competition.git
+cd 151B_SP26_Competition
+pip install -q -r experiments/exp_010_grpo_v2/requirements.txt
+python experiments/exp_010_grpo_v2/pilot.py 2>&1 | tee pilot.log
+# success line: "✅ Pilot complete. Stack works."
+
+# 4. If pilot passes, exit pod and launch full training as batch
+exit
+# back on dsmlp-login:
+K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 32 -c 8 -B \
+  -- bash -c '
+    set -e
+    cd ~ && git clone https://github.com/Trevis8688/151B_SP26_Competition.git
+    cd 151B_SP26_Competition
+    pip install -q -r experiments/exp_010_grpo_v2/requirements.txt
+    export HF_TOKEN=<paste token here>
+    python experiments/exp_010_grpo_v2/train_grpo_v2.py
+  '
+# Save the returned pod name; monitor with: kubectl logs -f <pod_name>
+```
+
+**Open items / known unknowns:**
+- cu124 wheels with driver 12.2 — should work (forward-compat), but if pilot fails on `libcuda.so` errors, fall back to cu121 wheels (one-liner in runbook §0.3).
+- HF_TOKEN required only for full train (not pilot). Get from huggingface.co/settings/tokens (write scope for the push at the end).
+- `nvcc` in container is 12.0; bitsandbytes uses `BNB_CUDA_VERSION=124` env var in the script — if it complains about mismatched CUDA, set to `121` instead.
+- a5000 was idle at 2026-05-11 15:40 PT; availability may differ on resume. If a5000 won't schedule, try `-v a30` → `-v l40s` → `-v a100` (in order).
 
 ### Phase 1 — Full training
 1. `launch.sh -g 1 -v <best_avail> -m 32 -B -- python train_grpo_v2.py`
