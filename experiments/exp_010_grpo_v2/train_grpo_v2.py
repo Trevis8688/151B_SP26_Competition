@@ -32,6 +32,7 @@ import shutil
 import gc
 import re
 import random
+import importlib.machinery
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -42,7 +43,14 @@ os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("BNB_CUDA_VERSION", "124")  # bitsandbytes wheel match
 
 # Mock vLLM and its tree of optional imports so TRL doesn't blow up trying to
-# import them when use_vllm=False. Same fix as exp_009 Cell 8.
+# import them when use_vllm=False. Same fix as exp_009 Cell 8, plus a proper
+# __spec__ so transformers' importlib.util.find_spec() check passes on Python
+# 3.11 / newer transformers (was: ValueError: llm_blender.__spec__ is not set).
+def _mock(name):
+    m = MagicMock()
+    m.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    sys.modules[name] = m
+
 for mod in [
     "vllm", "vllm.sampling_params", "vllm.distributed",
     "vllm.distributed.device_communicators",
@@ -54,7 +62,7 @@ for mod in [
     "mergekit", "mergekit.config", "mergekit.merge",
     "llm_blender",
 ]:
-    sys.modules[mod] = MagicMock()
+    _mock(mod)
 
 # ============================================================
 # 1. Paths + config

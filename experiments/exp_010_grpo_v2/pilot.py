@@ -11,11 +11,20 @@ Reads the same config.json as train_grpo_v2.py but overrides epochs/steps for sp
 Outputs to ./pilot_checkpoints/ (separate from the real run's ./checkpoints/).
 """
 import os, sys, json, gc, random
+import importlib.machinery
 from pathlib import Path
 from unittest.mock import MagicMock
 
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("BNB_CUDA_VERSION", "124")
+
+# Bare MagicMock fails newer transformers' importlib.util.find_spec() check
+# because __spec__ auto-mocks to a MagicMock (no _initializing attr) → ValueError.
+# Give each mock a real ModuleSpec so find_spec returns a valid value.
+def _mock(name):
+    m = MagicMock()
+    m.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    sys.modules[name] = m
 
 for mod in ["vllm", "vllm.sampling_params", "vllm.distributed",
             "vllm.distributed.device_communicators",
@@ -24,7 +33,7 @@ for mod in ["vllm", "vllm.sampling_params", "vllm.distributed",
             "vllm_ascend.distributed.device_communicators",
             "vllm_ascend.distributed.device_communicators.pyhccl",
             "mergekit", "mergekit.config", "mergekit.merge", "llm_blender"]:
-    sys.modules[mod] = MagicMock()
+    _mock(mod)
 
 EXP_DIR  = Path(__file__).resolve().parent
 REPO_DIR = EXP_DIR.parent.parent
