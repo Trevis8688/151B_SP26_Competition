@@ -96,17 +96,37 @@ Successful rescues are **appended** (not replaced) onto the original response, p
 
 Independent of exp_011 — runs directly on exp_009 outputs.
 
-## Dev results
+## Results (2026-05-12)
 
-_Fill in after stage 2 runs on exp_011's missing-boxed cases._
+Stage-2 ran on `Qwen/Qwen3-4B-Thinking-2507` (base, not GRPO) over exp_009's outputs. Detection used the literal `\boxed` substring check.
 
-| Metric | Baseline (exp_011) | This (exp_012) | Δ |
+**Rescue stats:**
+- Public: 190 candidates → 70 rescued (36.8% of candidates emitted a `\boxed`)
+- Private: 190 candidates → 64 rescued (33.7%)
+
+**Local score (public set, 1126 q):**
+
+| Metric | exp_009 baseline | exp_012 rescued | Δ |
 |---|---:|---:|---:|
-| Overall | | | |
-| MCQ | | | |
-| Free-form | | | |
-| missing_boxed count | | | |
-| rescues that produced correct answer | | | |
+| Overall | 55.95% (630/1126) | **57.99%** (653/1126) | **+2.04pp** |
+| MCQ (375 q) | 63.47% | **68.27%** | **+4.80pp** |
+| Free-form (751 q) | 52.20% | 52.86% | +0.66pp |
+
+Of the 70 successful public rescues, **23 produced correct answers (32.9% hit rate)**. The other 47 produced wrong extractions or no-help text, but since exp_009 already counted them as wrong, those have **zero net impact** on the score — the rescue is asymmetric: upside only.
+
+**Key observation: MCQ rescue dominates.** Free-form rescue only added ~5 correct answers, while MCQ rescue added ~18. Makes sense — when an MCQ run-out has even partial reasoning, the base model can usually pick the right letter; for free-form, hallucinating a numeric answer from incomplete reasoning is much harder.
+
+**Kaggle projection:** exp_009 was 0.583. A +2pp local lift suggests **~0.600–0.605 on Kaggle** (locals have historically translated ~1:1 to the leaderboard).
+
+## Kaggle result (submitted 2026-05-12)
+
+**Kaggle score: 0.597** (+1.4pp vs exp_009's 0.583). **New best.** Translation rate ≈ 0.69 (vs the ~1:1 we projected) — locals overestimated this submission a bit, likely because the private set's missing_boxed rate is slightly different from public (rescue stats showed 70/190 public vs 64/190 private rescued, so private has ~9% fewer rescues, plausibly explaining the lower-than-projected lift).
+
+| | local | Kaggle |
+|---|---:|---:|
+| exp_009 baseline | 55.95% | 0.583 |
+| exp_012 rescued | 57.99% | **0.597** |
+| Δ | +2.04pp | +1.4pp |
 
 ## Risks
 
@@ -135,6 +155,6 @@ rescue_notebook.ipynb   Reads exp_NNN/config.json for source_experiment + stage1
 If a future experiment shows the GRPO model is meaningfully better at rescue, override via `rescue.model_id` in config.json — no notebook changes needed.
 
 ## Conclusion
-- [ ] Keep
+- [x] Keep — +2.04pp local; submit to Kaggle
 - [ ] Discard
-- [ ] Needs variant — next experiment idea:
+- [ ] Needs variant — next experiment idea: investigate why free-form rescue rate is so low (only +0.66pp). Possibly the rescue model (base Thinking-2507) isn't smart enough to extract free-form answers from incomplete CoT. Try GRPO model as rescue extractor on free-form only? Or use a longer rescue token budget (currently 2048 → 4096) so it can re-derive the answer instead of just extracting?
