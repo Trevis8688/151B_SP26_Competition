@@ -18,3 +18,8 @@ huggingface_hub
 # Judger deps (already in my-virtenv; re-install for the container)
 sympy
 antlr4-python3-runtime==4.11
+
+# Flash Attention 2 — O(n) attention memory instead of O(n²).
+# Critical for fitting max_completion=6144 on a5000 24GB.
+# Falls back to SDPA's memory-efficient kernel if wheel isn't pre-built.
+flash-attn>=2.6.0
