@@ -1,0 +1,21 @@
+{
+  "_comment": "exp_013 — same as exp_012 boxed_rescue but max_tokens 2048 → 4096 to attack the weak free-form rescue rate. Reused rescue_notebook.ipynb at repo root reads this config.",
+  "source_experiment": "exp_009_grpo",
+  "stage1_dataset_name": "exp-009-grpo-responses",
+  "rescue": {
+    "model_id": "Qwen/Qwen3-4B-Thinking-2507",
+    "max_tokens": 4096,
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_input_tokens_from_stage1": 3000
+  },
+  "vllm": {
+    "max_model_len": 8192,
+    "max_num_seqs": 24,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  },
+  "notes": "Only knob changed from exp_012: rescue.max_tokens 2048 → 4096. Hypothesis: free-form rescue was weak (+0.66pp) because base Thinking-2507 couldn't fit thinking + boxed answer in 2048 tokens after seeing the GRPO trace. MCQ rescue (+4.80pp) is unaffected because the MCQ prompt forces 'output ONLY the letter' — model won't use the extra room. max_num_seqs reduced 32 → 24 to fit 2× KV per sequence."
+}
