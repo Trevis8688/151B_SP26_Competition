@@ -86,6 +86,43 @@ The `--no-deps` on vllm is load-bearing: vllm 0.6.6 has its own torch pin that c
 - LoRA hot-swap cost per step — unknown overhead, the pilot is mostly to measure this
 - Inference dtype: training base is bf16 (a5000), Kaggle T4 inference is fp16. Adapter applies linearly so drift should be negligible, but worth noting if Phase 2 score is unexpectedly low
 
+## Run 2 v3 (torch 2.6 upgrade) — 2026-05-12
+
+Run 2 v2's pilot exposed the closing of the version trap: **vllm 0.6.6.post1 does NOT support `Qwen3ForCausalLM`.** The error chain:
+
+```
+torch 2.5.1 (pinned for exp_009 stack)
+  → requires vllm ≤ 0.6.6
+  → vllm 0.6.6 doesn't know Qwen3ForCausalLM (only Qwen2)
+  → Qwen3 support landed in vllm 0.7.3+
+  → vllm 0.7+ requires torch ≥ 2.6
+```
+
+The monkey-patch worked (`dropped: ['model_impl']` was correctly filtered), but no patch can teach vllm 0.6.6 a model architecture it has no implementation for.
+
+**Run 2 v3 = bite the bullet, upgrade torch.**
+
+| Dep | Run 2 v2 | **Run 2 v3** | Why |
+|---|---|---|---|
+| torch | 2.5.1+cu124 | **2.6.0+cu124** | vllm 0.7+ requires it |
+| torchvision/torchaudio | 0.20.1 / 2.5.1 | **0.21.0 / 2.6.0** | Match torch |
+| vllm | 0.6.6.post1 | **0.8.5** | First stable line with Qwen3 |
+| flash-attn | >=2.6.0 | **>=2.7.0 (2.7.4.post1 pinned)** | 2.6 wheels are torch-2.5 only |
+| bitsandbytes | >=0.46.1 | unchanged | Already supports torch 2.6 |
+| trl/peft/accelerate/transformers | unchanged | unchanged | Forward-compat |
+
+**Install order is load-bearing** — requirements.txt no longer includes flash-attn or vllm because they need flags pip refuses to combine with -r:
+```
+pip install -r requirements.txt                              # torch 2.6 + bnb/trl/etc.
+pip install --no-build-isolation flash-attn==2.7.4.post1     # compiles against installed torch
+pip install --no-deps vllm==0.8.5                            # don't let it pull torch back
+```
+
+**Risk that landed v3 here, not earlier:**
+I should have caught the Qwen3 architecture support gap when picking vllm 0.6.6 in v2 — that's on me. The Qwen2 vs Qwen3 distinction is exactly the kind of compat detail that costs a pilot run to surface, and in retrospect a 30-second `grep Qwen3 vllm/model_executor/models/` would have spotted it before pushing v2.
+
+**Pilot still mandatory** — same 5-step validation as v2, just on the upgraded stack. Same goalposts: (1) bf16 base loads no-OOM, (2) vllm init succeeds, (3) first step <90s rollout, (4) steps 2-5 <4 min each.
+
 ---
 
 

@@ -4,9 +4,10 @@ Validates the Run 2 v2 stack (vLLM + fp16 base + FA2) without burning the 12hr
 container. If this finishes without OOM and reward fluctuates, the real run
 should work.
 
-Usage (DSMLP, inside the container):
+Usage (DSMLP, inside the container, full install order):
     pip install -q -r experiments/exp_010_grpo_v2/requirements.txt
-    pip install -q --no-deps vllm==0.6.6.post1
+    pip install -q --no-build-isolation flash-attn==2.7.4.post1
+    pip install -q --no-deps vllm==0.8.5
     python experiments/exp_010_grpo_v2/pilot.py
 
 What to look for in the log:
@@ -24,7 +25,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-os.environ.setdefault("BNB_CUDA_VERSION", "124")
+# (BnB env var removed — Run 2 v3 doesn't use 4-bit BnB)
 
 # Bare MagicMock fails newer transformers' importlib.util.find_spec() check
 # because __spec__ auto-mocks to a MagicMock (no _initializing attr) → ValueError.

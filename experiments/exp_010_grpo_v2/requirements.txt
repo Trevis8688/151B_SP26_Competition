@@ -1,10 +1,16 @@
 # GRPO v2 deps on top of scipy-ml-notebook:stable.
-# Pinned to versions verified on exp_009 Colab run (CUDA 12.4 stack).
-# If torch is already present and CUDA-correct, the pip install is a no-op for torch.
+# Stack upgraded torch 2.5 → 2.6 to unblock vLLM Qwen3 support.
+# vllm 0.6.6 (the last torch-2.5-compatible vllm) only knows Qwen2ForCausalLM,
+# not Qwen3ForCausalLM. Qwen3 lands in vllm 0.7.3+, which needs torch 2.6+.
+# See notes.md "Run 2 v3 (torch 2.6 upgrade)" section for the full chain.
+#
+# flash-attn and vllm are NOT in this file because they need install flags
+# that pip refuses to combine with -r: flash-attn needs --no-build-isolation,
+# vllm needs --no-deps. Install them as separate pip commands after this file.
 
-torch==2.5.1
-torchvision==0.20.1
-torchaudio==2.5.1
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
 --extra-index-url https://download.pytorch.org/whl/cu124
 
 bitsandbytes>=0.46.1
@@ -18,15 +24,3 @@ huggingface_hub
 # Judger deps (already in my-virtenv; re-install for the container)
 sympy
 antlr4-python3-runtime==4.11
-
-# Flash Attention 2 — O(n) attention memory instead of O(n²).
-# Critical for fitting max_completion=4096 on a5000 24GB alongside vLLM.
-# Falls back to SDPA's memory-efficient kernel if wheel isn't pre-built.
-flash-attn>=2.6.0
-
-# vLLM — needed for use_vllm=True in GRPOConfig. Gives 3-5x faster rollouts
-# vs HuggingFace model.generate via continuous batching + paged attention.
-# Install with --no-deps in launch script to avoid pulling vllm's own torch
-# pin which conflicts with our torch==2.5.1 cu124. Version 0.6.6.post1 is the
-# last that supports torch 2.5; later versions require torch 2.6+.
-vllm==0.6.6.post1

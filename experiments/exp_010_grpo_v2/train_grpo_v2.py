@@ -8,17 +8,27 @@ Ported from exp_009/train_grpo.ipynb. Changes from exp_009:
   - save: Drive callback removed; HF push-on-save every 10 steps to ckpt repo
   - HF push at end (replaces Cell 10/11 of exp_009 notebook)
 
-Run 2 v2 (vLLM rollouts):
-  - 4-bit BnB removed; base loads in bf16/fp16 (vLLM can't read BnB checkpoints).
+Run 2 v3 (torch 2.6 + vLLM 0.8 for Qwen3 support):
+  - torch 2.5 → 2.6 (vllm 0.6.6 doesn't support Qwen3ForCausalLM)
+  - vllm 0.6.6 → 0.8.5 (first stable with Qwen3 support)
+  - flash-attn rebuilt against torch 2.6 (--no-build-isolation needed)
+  - 4-bit BnB removed; base loads in bf16/fp16 (vLLM can't read BnB).
   - use_vllm=True, vllm_mode="colocate" → ~3-5x faster rollouts vs HF generate.
   - Gradient checkpointing kept ON (tight memory on a5000 24GB next to vLLM).
   - Flash Attention 2 explicit (attn_implementation="flash_attention_2").
 
-Usage (DSMLP, a5000 single GPU, 12hr container):
+Usage (DSMLP, a5000 single GPU, 12hr container).
+Install order is load-bearing — install the three groups separately:
+  1. requirements.txt: torch 2.6 + bitsandbytes/trl/peft/accelerate/etc.
+  2. flash-attn 2.7.x with --no-build-isolation (sees the freshly-installed torch)
+  3. vllm 0.8.5 with --no-deps (don't let it pull its own torch)
+
     K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \\
         -- bash -c 'cd /home/$USER/151B_SP26_Competition && \\
+                    git pull origin main && \\
                     pip install -q -r experiments/exp_010_grpo_v2/requirements.txt && \\
-                    pip install -q --no-deps vllm==0.6.6.post1 && \\
+                    pip install -q --no-build-isolation flash-attn==2.7.4.post1 && \\
+                    pip install -q --no-deps vllm==0.8.5 && \\
                     HF_TOKEN=$(cat /home/$USER/.hf_token) \\
                         python experiments/exp_010_grpo_v2/train_grpo_v2.py'
 
@@ -48,7 +58,7 @@ from unittest.mock import MagicMock
 # 0. Environment — set BEFORE importing torch / trl
 # ============================================================
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-os.environ.setdefault("BNB_CUDA_VERSION", "124")  # bitsandbytes wheel match
+# (BnB env var removed — Run 2 v3 doesn't use 4-bit BnB, weights are bf16 for vLLM)
 
 # Mock the *optional* trl deps that aren't installed (mergekit, llm_blender,
 # vllm_ascend). vllm itself is now a real install (use_vllm=True), so it must
