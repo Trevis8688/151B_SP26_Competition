@@ -46,6 +46,35 @@ DSMLP gotchas (from the IT services KB doc):
 
 ## Plan
 
+### 🌙 OVERNIGHT RUN IN PROGRESS — started 2026-05-12 03:46 PT
+
+**Pod name:** `trduong-1240942` (a5000, 48 GB RAM, 8 CPU)
+**Expected completion:** ~12:15 PT (8.5h training + ~30 min HF merge/upload)
+**Timeout:** 12:46 PT (K8S_TIMEOUT_SECONDS=43200)
+
+Step 1 health check passed:
+- 79s/step → ~8.5h ETA for 386 dataloader iterations (= 96 optimizer steps × grad_accum=4)
+- max_completion=6144 fits on a5000 24GB (flash-attn FA2 backend doing its job)
+- 650-token completions on step 1 — nowhere near the cap, room to spare
+- bf16 active, no OOM
+
+**Morning checklist:**
+```bash
+ssh trduong@dsmlp-login.ucsd.edu
+kubectl get pods                                 # check status: Completed / Running / OOMKilled / Error / DeadlineExceeded
+kubectl logs trduong-1240942 | tail -100         # see last steps + final messages
+```
+
+Expected good outcomes (in order of preference):
+1. **`ALL DONE.`** at end of logs → model pushed to `https://huggingface.co/TrevorDuong/qwen3-4b-thinking-grpo-v2`. Move to Phase 2.
+2. **`Pushing to https://huggingface.co/...`** but no ALL DONE → upload still in progress; wait 5 more min.
+3. **Training done but HF push failed** → adapter is at `experiments/exp_010_grpo_v2/adapter_final/` on NFS. Re-run just the HF push manually from a small pod.
+4. **OOMKilled / DeadlineExceeded mid-run** → checkpoints at `experiments/exp_010_grpo_v2/checkpoints/checkpoint-25,-50,-75` (every 25 steps) survive on NFS. Recoverable.
+
+**Don't forget after collecting results:** `kubectl delete pod trduong-1240942`
+
+---
+
 ### Phase 0 — DSMLP onboarding (paused 2026-05-11 — partial)
 1. ✅ SSH into `dsmlp-login.ucsd.edu` (user `trduong`, Duo every 8h)
 2. ✅ GPU menu surveyed via `launch.sh -h`: `1080 | 1080ti | 2080ti | a30 | a5000 | a100 | h100 | rtxtitan | l40s`. Default `launch.sh -g 1` (no `-v`) landed on **RTX 2070 / 8 GB — too small** for our settings. Must use `-v a5000` (24 GB Ampere, bf16, FA2) or fallback `-v a30`/`-v l40s`.
