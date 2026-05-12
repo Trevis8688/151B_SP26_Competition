@@ -43,6 +43,49 @@ Pivot back to exp_009's strict-70 curriculum, scale up the *training depth* inst
 
 **Risk:** marginal yield from steps 15→35 is unknown. exp_009 might have already been plateauing at step 14. If so, gains will be modest. But cost is one a5000 night, which is cheap.
 
+## Run 2 v2 update (2026-05-12, post-design-review)
+
+Realized that the per-step ETA in Run 2 v1 was based on rollout-bound generation with HF `model.generate()` — same backend as Run 1 — and revisiting Run 1's per-step times on non-clipping steps shows ~10 min/step, not 4-5 min. With 140 steps for 2 epochs that's ~23h, well over the 12h timeout.
+
+**Root cause:** the script had `use_vllm=False`. All 4 rollouts per step were running through plain HF generate with no continuous batching.
+
+**Run 2 v2 changes:**
+
+| Knob | Run 2 v1 | **Run 2 v2** | Why |
+|---|---|---|---|
+| Generation backend | HF `model.generate` | **vLLM colocate** | 3-5× faster rollouts via continuous batching + paged attention |
+| Base model quant | 4-bit BnB | **bf16/fp16** | vLLM can't read BnB checkpoints; needs vLLM-compatible weights |
+| Attention | implicit (likely SDPA) | **explicit FA2** | `attn_implementation="flash_attention_2"` — O(n) memory |
+| `vllm_gpu_memory_utilization` | — | **0.45** | Conservative on a5000 24GB; raise if first 5 steps stable |
+| Gradient checkpointing | on | **on** | Memory budget is tight (8GB base + 11GB vLLM + 3-5GB train residual) |
+| Pilot before full | optional | **mandatory** | LoRA-sync overhead in colocate is the failure-mode-of-record |
+
+**Revised ETA:** ~3-4 min/step × 140 steps ≈ **9-10 hours**. Fits 12h container, but not with comfortable margin.
+
+**Pilot validates (5 steps, ~25-30 min):**
+1. `GRPOConfig vLLM fields:` log line — confirms TRL exposes the kwargs we pass
+2. fp16/bf16 base loads without OOM at gpu_memory_util=0.45
+3. vLLM init banner appears, no OOM mid-init
+4. First step's rollouts finish in <90s
+5. Steps 2-5 wallclock <4 min each (no growing LoRA-sync stall)
+
+**Launch sequence after pilot passes:**
+```
+K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \
+  -- bash -c 'cd /home/$USER/151B_SP26_Competition && \
+              pip install -q -r experiments/exp_010_grpo_v2/requirements.txt && \
+              pip install -q --no-deps vllm==0.6.6.post1 && \
+              HF_TOKEN=$(cat /home/$USER/.hf_token) \
+                python experiments/exp_010_grpo_v2/train_grpo_v2.py'
+```
+
+The `--no-deps` on vllm is load-bearing: vllm 0.6.6 has its own torch pin that conflicts with the cu124 stack pinned in requirements.txt. We let pip-check warnings show after but don't let it pull a replacement torch.
+
+**Open risks (not yet validated):**
+- TRL 0.21 colocate API surface — exact kwarg names verified via the `_vllm_fields` printout
+- LoRA hot-swap cost per step — unknown overhead, the pilot is mostly to measure this
+- Inference dtype: training base is bf16 (a5000), Kaggle T4 inference is fp16. Adapter applies linearly so drift should be negligible, but worth noting if Phase 2 score is unexpectedly low
+
 ---
 
 

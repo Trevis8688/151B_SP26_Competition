@@ -1,14 +1,22 @@
 """Sanity-check pilot: 5 GRPO steps on 10 prompts, no HF push.
 
-Goal: surface install/CUDA/dtype/OOM issues in under 30 minutes BEFORE you burn
-a 12-hour batch slot on the real run.
+Validates the Run 2 v2 stack (vLLM + fp16 base + FA2) without burning the 12hr
+container. If this finishes without OOM and reward fluctuates, the real run
+should work.
 
 Usage (DSMLP, inside the container):
     pip install -q -r experiments/exp_010_grpo_v2/requirements.txt
+    pip install -q --no-deps vllm==0.6.6.post1
     python experiments/exp_010_grpo_v2/pilot.py
 
-Reads the same config.json as train_grpo_v2.py but overrides epochs/steps for speed.
-Outputs to ./pilot_checkpoints/ (separate from the real run's ./checkpoints/).
+What to look for in the log:
+  1. "GRPOConfig vLLM fields:" — confirms TRL exposes vllm_mode etc.
+  2. "Loading {model} in torch.bfloat16" — confirms fp16/bf16 base, no BnB.
+  3. vLLM init banner — no OOM at gpu_memory_utilization=0.45.
+  4. First [step 1] reward log appears in <5 min.
+  5. Per-step wallclock stays under 4 min on steps 2-5 (LoRA sync overhead).
+
+Reads same config.json as train_grpo_v2.py but overrides epochs/steps/max_completion.
 """
 import os, sys, json, gc, random
 import importlib.machinery
@@ -26,10 +34,8 @@ def _mock(name):
     m.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
     sys.modules[name] = m
 
-for mod in ["vllm", "vllm.sampling_params", "vllm.distributed",
-            "vllm.distributed.device_communicators",
-            "vllm.distributed.device_communicators.pynccl",
-            "vllm.distributed.utils", "vllm_ascend", "vllm_ascend.distributed",
+# vllm itself is now a real install (use_vllm=True) — do NOT mock.
+for mod in ["vllm_ascend", "vllm_ascend.distributed",
             "vllm_ascend.distributed.device_communicators",
             "vllm_ascend.distributed.device_communicators.pyhccl",
             "mergekit", "mergekit.config", "mergekit.merge", "llm_blender"]:
@@ -41,32 +47,36 @@ sys.path.insert(0, str(REPO_DIR))
 sys.path.insert(0, str(EXP_DIR))
 
 CONFIG     = json.loads((EXP_DIR / "config.json").read_text())
-CURRICULUM = json.loads((EXP_DIR / "sweet_spot_ids.json").read_text())
+CURRICULUM = json.loads((EXP_DIR / CONFIG.get("curriculum_file", "sweet_spot_ids_clean.json")).read_text())
 SWEET_IDS  = set(CURRICULUM["sweet_ids"])
 
 import torch
 print(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE'}")
 print(f"CUDA: torch={torch.__version__}  cuda={torch.version.cuda}  bf16={torch.cuda.is_bf16_supported()}")
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainerCallback
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
+from peft import LoraConfig, get_peft_model
 from datasets import Dataset
 from trl import GRPOConfig, GRPOTrainer
+import dataclasses
+_vllm_fields = [f.name for f in dataclasses.fields(GRPOConfig) if "vllm" in f.name.lower()]
+print(f"GRPOConfig vLLM fields: {_vllm_fields}")
 from judger import Judger
 from prompts import SYSTEM_PROMPT_MATH, SYSTEM_PROMPT_MCQ, FEWSHOT_MATH, FEWSHOT_MCQ
 
 BF16_OK = torch.cuda.is_bf16_supported()
 CDT = torch.bfloat16 if BF16_OK else torch.float16
 
-print(f"\nLoading {CONFIG['base_model']} (4-bit) ...")
-bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=CDT, bnb_4bit_use_double_quant=True)
+print(f"\nLoading {CONFIG['base_model']} in {CDT} (no BnB; vLLM-compatible) ...")
 tokenizer = AutoTokenizer.from_pretrained(CONFIG["base_model"], trust_remote_code=True)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
-model = AutoModelForCausalLM.from_pretrained(CONFIG["base_model"], quantization_config=bnb,
-                                             device_map="auto", trust_remote_code=True, torch_dtype=CDT)
-model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+model = AutoModelForCausalLM.from_pretrained(
+    CONFIG["base_model"], torch_dtype=CDT, device_map="auto",
+    trust_remote_code=True, attn_implementation="flash_attention_2",
+)
+model.gradient_checkpointing_enable()
+model.enable_input_require_grads()
 T = CONFIG["training"]
 model = get_peft_model(model, LoraConfig(
     r=T["lora_r"], lora_alpha=T["lora_alpha"], lora_dropout=0.0, bias="none",
@@ -146,7 +156,7 @@ if not hasattr(model, "warnings_issued"):
     model.warnings_issued = {}
 
 # OVERRIDE: max 5 steps regardless of dataset size
-args = GRPOConfig(
+pilot_kwargs = dict(
     output_dir=str(EXP_DIR / "pilot_checkpoints"),
     max_steps=5, num_train_epochs=1,
     per_device_train_batch_size=1, gradient_accumulation_steps=4,
@@ -156,8 +166,22 @@ args = GRPOConfig(
     num_generations=T["num_generations"],
     max_prompt_length=T["max_prompt_length"],
     max_completion_length=2048,  # short for pilot
-    temperature=T["temperature_train"], use_vllm=False,
+    temperature=T["temperature_train"],
+    use_vllm=T.get("use_vllm", False),
 )
+_vff = set(_vllm_fields)
+if T.get("use_vllm"):
+    for k, v in (
+        ("vllm_mode", T.get("vllm_mode", "colocate")),
+        ("vllm_gpu_memory_utilization", T.get("vllm_gpu_memory_utilization", 0.45)),
+        ("vllm_tensor_parallel_size", 1),
+        ("vllm_dtype", "auto"),
+    ):
+        if k in _vff:
+            pilot_kwargs[k] = v
+        else:
+            print(f"  (skipping unsupported field: {k}={v})")
+args = GRPOConfig(**pilot_kwargs)
 trainer = GRPOTrainer(model=model, processing_class=tokenizer,
                      reward_funcs=[correctness, fmt], args=args,
                      train_dataset=ds, callbacks=[Logger()])

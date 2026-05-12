@@ -1,5 +1,5 @@
 {
-  "_comment": "Training hyperparams for exp_010 GRPO v2 — DSMLP overnight Run 2. Pivoted from full-196 curriculum (Run 1 stalled: ~67% of steps had frac_reward_zero_std=1.0 due to all-clipping on Phase 1B prompts) to strict-70. See notes.md 'Run 1 post-mortem' section.",
+  "_comment": "Training hyperparams for exp_010 GRPO v2 — DSMLP overnight Run 2 (v2). Run 1 stalled (full-196, no vLLM, ~67% steps had dead gradient). Run 2 v1 plan was strict-70 + 4096 tokens but per-step was still ~10min on HF generate → 23h ETA. Run 2 v2 switches to vLLM-backed rollouts (colocate, fp16 base, no BnB) to bring per-step to ~3-4min. ETA ~9-10h, fits 12h container. See notes.md.",
   "base_model": "Qwen/Qwen3-4B-Thinking-2507",
   "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-v2",
   "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-v2-ckpt",
@@ -20,7 +20,10 @@
     "temperature_train": 1.0,
     "save_strategy": "steps",
     "save_steps": 10,
-    "save_total_limit": 5
+    "save_total_limit": 5,
+    "use_vllm": true,
+    "vllm_mode": "colocate",
+    "vllm_gpu_memory_utilization": 0.45
   },
   "reward": {
     "correctness_weight": 1.0,

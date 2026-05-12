@@ -20,6 +20,13 @@ sympy
 antlr4-python3-runtime==4.11
 
 # Flash Attention 2 — O(n) attention memory instead of O(n²).
-# Critical for fitting max_completion=6144 on a5000 24GB.
+# Critical for fitting max_completion=4096 on a5000 24GB alongside vLLM.
 # Falls back to SDPA's memory-efficient kernel if wheel isn't pre-built.
 flash-attn>=2.6.0
+
+# vLLM — needed for use_vllm=True in GRPOConfig. Gives 3-5x faster rollouts
+# vs HuggingFace model.generate via continuous batching + paged attention.
+# Install with --no-deps in launch script to avoid pulling vllm's own torch
+# pin which conflicts with our torch==2.5.1 cu124. Version 0.6.6.post1 is the
+# last that supports torch 2.5; later versions require torch 2.6+.
+vllm==0.6.6.post1

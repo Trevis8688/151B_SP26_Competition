@@ -3,16 +3,24 @@
 Ported from exp_009/train_grpo.ipynb. Changes from exp_009:
   - LR 2e-5 → 1e-5 (config.json)
   - BETA 0.01 → 0.02 (config.json)
-  - curriculum: sweet_spot_ids.json (196) instead of sweet_spot_ids_clean.json (70)
-  - epochs: 1 (aborted at 0.8) → 2 (full)
-  - save: Drive callback removed; save_steps=25 to container local disk
+  - curriculum: sweet_spot_ids_clean.json (strict-70) — same as exp_009 best
+  - epochs: 2
+  - save: Drive callback removed; HF push-on-save every 10 steps to ckpt repo
   - HF push at end (replaces Cell 10/11 of exp_009 notebook)
 
-Usage (DSMLP):
-    K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -m 32 -c 8 -B \\
+Run 2 v2 (vLLM rollouts):
+  - 4-bit BnB removed; base loads in bf16/fp16 (vLLM can't read BnB checkpoints).
+  - use_vllm=True, vllm_mode="colocate" → ~3-5x faster rollouts vs HF generate.
+  - Gradient checkpointing kept ON (tight memory on a5000 24GB next to vLLM).
+  - Flash Attention 2 explicit (attn_implementation="flash_attention_2").
+
+Usage (DSMLP, a5000 single GPU, 12hr container):
+    K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \\
         -- bash -c 'cd /home/$USER/151B_SP26_Competition && \\
                     pip install -q -r experiments/exp_010_grpo_v2/requirements.txt && \\
-                    HF_TOKEN=$HF_TOKEN python experiments/exp_010_grpo_v2/train_grpo_v2.py'
+                    pip install -q --no-deps vllm==0.6.6.post1 && \\
+                    HF_TOKEN=$(cat /home/$USER/.hf_token) \\
+                        python experiments/exp_010_grpo_v2/train_grpo_v2.py'
 
 Monitor:
     kubectl logs -f <pod_name>
@@ -23,7 +31,7 @@ Expects repo layout:
     <repo>/data/splits/dev.jsonl
     <repo>/judger.py
     <repo>/utils.py
-    <repo>/experiments/exp_010_grpo_v2/{config.json, prompts.py, sweet_spot_ids.json}
+    <repo>/experiments/exp_010_grpo_v2/{config.json, prompts.py, sweet_spot_ids_clean.json}
 """
 import json
 import os
@@ -42,20 +50,16 @@ from unittest.mock import MagicMock
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("BNB_CUDA_VERSION", "124")  # bitsandbytes wheel match
 
-# Mock vLLM and its tree of optional imports so TRL doesn't blow up trying to
-# import them when use_vllm=False. Same fix as exp_009 Cell 8, plus a proper
-# __spec__ so transformers' importlib.util.find_spec() check passes on Python
-# 3.11 / newer transformers (was: ValueError: llm_blender.__spec__ is not set).
+# Mock the *optional* trl deps that aren't installed (mergekit, llm_blender,
+# vllm_ascend). vllm itself is now a real install (use_vllm=True), so it must
+# NOT be mocked. ModuleSpec is needed for transformers' importlib.util.find_spec
+# on Python 3.11 (bare MagicMock fails with: __spec__ is not set).
 def _mock(name):
     m = MagicMock()
     m.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
     sys.modules[name] = m
 
 for mod in [
-    "vllm", "vllm.sampling_params", "vllm.distributed",
-    "vllm.distributed.device_communicators",
-    "vllm.distributed.device_communicators.pynccl",
-    "vllm.distributed.utils",
     "vllm_ascend", "vllm_ascend.distributed",
     "vllm_ascend.distributed.device_communicators",
     "vllm_ascend.distributed.device_communicators.pyhccl",
@@ -101,12 +105,18 @@ if not HF_TOKEN:
 # ============================================================
 import torch
 from transformers import (
-    AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainerCallback
+    AutoModelForCausalLM, AutoTokenizer, TrainerCallback
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
+from peft import LoraConfig, get_peft_model, PeftModel
 from datasets import Dataset
 from trl import GRPOConfig, GRPOTrainer
 from huggingface_hub import HfApi
+
+# Surface available vLLM-related GRPOConfig fields once so we can spot API
+# drift between TRL versions in the log (helps debug if a vllm_* kwarg fails).
+import dataclasses
+_vllm_fields = [f.name for f in dataclasses.fields(GRPOConfig) if "vllm" in f.name.lower()]
+print(f"GRPOConfig vLLM fields: {_vllm_fields}")
 
 # Project-local modules
 from judger import Judger  # noqa: E402
@@ -123,28 +133,30 @@ random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 
 # ============================================================
-# 3. Tokenizer + 4-bit base + LoRA wrap
+# 3. Tokenizer + fp16/bf16 base + LoRA wrap
+# vLLM colocate mode reads weights directly from the trainer's PEFT model, so
+# the base must be in a vLLM-compatible format (bf16/fp16, not BnB 4-bit).
+# Memory is tight on a5000 24GB: ~8GB base + ~11GB vLLM (gpu_mem_util=0.45) +
+# ~3-5GB activations/optim. Gradient checkpointing stays ON.
 # ============================================================
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=COMPUTE_DTYPE,
-    bnb_4bit_use_double_quant=True,
-)
-
-print(f"\nLoading tokenizer + 4-bit model: {BASE_MODEL}")
+print(f"\nLoading tokenizer + {COMPUTE_DTYPE} model: {BASE_MODEL}")
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
+# attn_implementation="flash_attention_2" requested explicitly; transformers
+# falls back to SDPA if the flash-attn wheel didn't build (we'll see a warning
+# in the log if so — at that point we should suspect the install step).
 model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
-    quantization_config=bnb_config,
+    torch_dtype=COMPUTE_DTYPE,
     device_map="auto",
     trust_remote_code=True,
-    torch_dtype=COMPUTE_DTYPE,
+    attn_implementation="flash_attention_2",
 )
-model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+# Replaces prepare_model_for_kbit_training (which was BnB-specific).
+model.gradient_checkpointing_enable()
+model.enable_input_require_grads()
 
 lora_config = LoraConfig(
     r=TRAIN["lora_r"],
@@ -270,7 +282,11 @@ gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
-training_args = GRPOConfig(
+# Build GRPOConfig kwargs. vllm_* fields are added conditionally — TRL renamed
+# some between 0.16 and 0.21 (vllm_gpu_memory_utilization, vllm_mode, etc).
+# We only pass fields that the installed TRL actually defines, so the script
+# survives minor version drift.
+grpo_kwargs = dict(
     output_dir=str(CKPT_DIR),
     num_train_epochs=TRAIN["epochs"],
     per_device_train_batch_size=TRAIN["per_device_train_batch_size"],
@@ -293,8 +309,21 @@ training_args = GRPOConfig(
     max_completion_length=TRAIN["max_completion_length"],
     temperature=TRAIN["temperature_train"],
     beta=TRAIN["beta"],
-    use_vllm=False,
+    use_vllm=TRAIN.get("use_vllm", False),
 )
+_vllm_field_names = set(_vllm_fields)
+if TRAIN.get("use_vllm"):
+    for k, v in (
+        ("vllm_mode", TRAIN.get("vllm_mode", "colocate")),
+        ("vllm_gpu_memory_utilization", TRAIN.get("vllm_gpu_memory_utilization", 0.45)),
+        ("vllm_tensor_parallel_size", 1),
+        ("vllm_dtype", "auto"),
+    ):
+        if k in _vllm_field_names:
+            grpo_kwargs[k] = v
+        else:
+            print(f"  (skipping unsupported GRPOConfig field: {k}={v})")
+training_args = GRPOConfig(**grpo_kwargs)
 
 # Restore original generate, then wrap with eval()/train() flip so use_cache is
 # respected during rollouts (5× speedup). Same fix as exp_009 Cell 8.
