@@ -118,6 +118,33 @@ import dataclasses
 _vllm_fields = [f.name for f in dataclasses.fields(GRPOConfig) if "vllm" in f.name.lower()]
 print(f"GRPOConfig vLLM fields: {_vllm_fields}")
 
+# ============================================================
+# vLLM EngineArgs compat shim
+# TRL 0.21 passes kwargs (model_impl, possibly others) that vllm 0.6.6.post1's
+# EngineArgs doesn't accept. vllm 0.6.6 is pinned because it's the last release
+# supporting torch==2.5.1. Filter unknown kwargs so the LLM() construction in
+# GRPOTrainer succeeds. For model_impl specifically: vllm 0.6 always uses its
+# native engine (== model_impl="vllm" in 0.8+), so dropping the kwarg preserves
+# behavior. If we ever swap in a newer vllm/torch, this whole block becomes a
+# no-op (the kwargs all match).
+# ============================================================
+try:
+    import inspect
+    import vllm.engine.arg_utils as _au
+    _orig_engine_init = _au.EngineArgs.__init__
+    _allowed_engine_kwargs = set(inspect.signature(_orig_engine_init).parameters)
+    def _patched_engine_init(self, *args, **kwargs):
+        dropped = {k: kwargs.pop(k) for k in list(kwargs) if k not in _allowed_engine_kwargs}
+        if dropped:
+            print(f"[vllm-compat] dropped unsupported EngineArgs kwargs: {list(dropped)}",
+                  flush=True)
+        return _orig_engine_init(self, *args, **kwargs)
+    _au.EngineArgs.__init__ = _patched_engine_init
+    print(f"[vllm-compat] EngineArgs has {len(_allowed_engine_kwargs)} known fields; "
+          f"unknown kwargs will be filtered.")
+except Exception as e:
+    print(f"[vllm-compat] could NOT patch EngineArgs (use_vllm may fail): {e}")
+
 # Project-local modules
 from judger import Judger  # noqa: E402
 from prompts import SYSTEM_PROMPT_MATH, SYSTEM_PROMPT_MCQ, FEWSHOT_MATH, FEWSHOT_MCQ  # noqa: E402

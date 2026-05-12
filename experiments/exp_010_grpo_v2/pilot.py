@@ -61,6 +61,22 @@ from trl import GRPOConfig, GRPOTrainer
 import dataclasses
 _vllm_fields = [f.name for f in dataclasses.fields(GRPOConfig) if "vllm" in f.name.lower()]
 print(f"GRPOConfig vLLM fields: {_vllm_fields}")
+
+# vLLM EngineArgs compat shim — TRL 0.21 passes kwargs (model_impl, etc.)
+# that vllm 0.6.6.post1 (pinned for torch 2.5) doesn't accept. Filter them.
+try:
+    import inspect, vllm.engine.arg_utils as _au
+    _orig = _au.EngineArgs.__init__
+    _allowed = set(inspect.signature(_orig).parameters)
+    def _patched(self, *args, **kwargs):
+        dropped = {k: kwargs.pop(k) for k in list(kwargs) if k not in _allowed}
+        if dropped:
+            print(f"[vllm-compat] dropped: {list(dropped)}", flush=True)
+        return _orig(self, *args, **kwargs)
+    _au.EngineArgs.__init__ = _patched
+    print(f"[vllm-compat] EngineArgs has {len(_allowed)} known fields; filtering on.")
+except Exception as e:
+    print(f"[vllm-compat] could not patch: {e}")
 from judger import Judger
 from prompts import SYSTEM_PROMPT_MATH, SYSTEM_PROMPT_MCQ, FEWSHOT_MATH, FEWSHOT_MCQ
 
