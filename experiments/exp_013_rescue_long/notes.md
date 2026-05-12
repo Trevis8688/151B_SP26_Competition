@@ -56,20 +56,33 @@ Worst case: MCQ rescue stays at its exp_012 level (+4.80pp baked in already) →
 
 Reuses the same `trevorduong/exp-009-grpo-responses` Kaggle dataset that exp_012 used.
 
-## Results
-
-_Fill in after Kaggle run._
+## Results (2026-05-12)
 
 | Metric | exp_012 (baseline) | exp_013 | Δ |
 |---|---:|---:|---:|
-| Local overall | 57.99% | | |
-| Local MCQ | 68.27% | | |
-| Local free-form | 52.86% | | |
-| Kaggle | 0.597 | | |
-| Public rescue rate | 70/190 (36.8%) | | |
-| Free-form rescues correct | ~5 of ~95 cand | | |
+| Local overall | 57.99% (653/1126) | **59.15%** (666/1126) | **+1.16pp** |
+| Local MCQ | 68.27% | **71.20%** | **+2.93pp** (+11 q on 375) |
+| Local free-form | 52.86% | 53.13% | +0.27pp (+2 q on 751) |
+| **Kaggle** | 0.597 | **0.607** | **+1.0pp** |
+| Public rescue rate | 70/190 (36.8%) | **106/190 (55.8%)** | +36 rescues |
+| Private rescue rate | 64/190 (33.7%) | 88/190 (46.3%) | +24 rescues |
+| Net correct lift on public | — | +13 q | (+11 MCQ, +2 FF) |
+| Hit rate on additional rescues | — | 13/36 = 36.1% | similar to exp_012 |
+
+**Kaggle translation rate:** 0.86 (1.0pp Kaggle / 1.16pp local) — better than the conservative 0.55 projection.
+
+## Hypothesis test outcome
+
+The pre-experiment hypothesis was: *"longer budget will help free-form because base Thinking-2507 ran out of room before converging on a numeric answer."*
+
+**The hypothesis was wrong.** Free-form only gained +0.27pp (+2 q). The +1.16pp overall came almost entirely from MCQ (+2.93pp). What actually happened:
+
+- MCQ prompt says "output ONLY the letter" but Thinking-2507 still runs internal CoT before the boxed letter. At 2048 tokens this CoT sometimes overflowed → no letter emitted. At 4096 the CoT finishes → letter emitted.
+- For free-form, the bottleneck is not budget — it's the **model's reasoning ability**. Even with double the tokens, the rescuer (base Thinking-2507) can't derive a numeric answer that the larger GRPO trace couldn't reach.
+
+**Lesson recorded:** free-form rescue is capability-limited, not budget-limited. Future free-form rescue attempts should use a smarter rescuer (e.g. the trained GRPO model itself as the extractor, or 2-pass self-consistency), not just more tokens.
 
 ## Conclusion
-- [ ] Keep
+- [x] Keep — Kaggle 0.607, new best (+1.0pp)
 - [ ] Discard
-- [ ] Needs variant — next: try GRPO model as rescuer (exp_014) if longer budget alone doesn't help free-form
+- [x] Needs variant — for free-form rescue: try GRPO model as rescuer (exp_014?) or self-consistency over the rescue pass. The token-budget lever is exhausted.
