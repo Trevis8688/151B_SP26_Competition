@@ -1,5 +1,5 @@
 {
-  "_comment": "Training hyperparams for exp_010 GRPO v2 — DSMLP overnight Run 2 (v2). Run 1 stalled (full-196, no vLLM, ~67% steps had dead gradient). Run 2 v1 plan was strict-70 + 4096 tokens but per-step was still ~10min on HF generate → 23h ETA. Run 2 v2 switches to vLLM-backed rollouts (colocate, fp16 base, no BnB) to bring per-step to ~3-4min. ETA ~9-10h, fits 12h container. See notes.md.",
+  "_comment": "Run 2 v4 (HF native + resume). vLLM path abandoned: vllm 0.6 doesn't support Qwen3, vllm 0.7+ needs torch 2.6, vllm 0.8 has cascading optional-dep import failures. Using HF model.generate (slow but bulletproof) + split-container resume: container 1 runs ~12h (1 epoch), container 2 next morning resumes from latest HF checkpoint (epoch 2). See notes.md.",
   "base_model": "Qwen/Qwen3-4B-Thinking-2507",
   "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-v2",
   "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-v2-ckpt",
@@ -21,9 +21,7 @@
     "save_strategy": "steps",
     "save_steps": 10,
     "save_total_limit": 5,
-    "use_vllm": true,
-    "vllm_mode": "colocate",
-    "vllm_gpu_memory_utilization": 0.45
+    "use_vllm": false
   },
   "reward": {
     "correctness_weight": 1.0,

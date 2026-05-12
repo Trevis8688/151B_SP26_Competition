@@ -123,6 +123,45 @@ I should have caught the Qwen3 architecture support gap when picking vllm 0.6.6 
 
 **Pilot still mandatory** — same 5-step validation as v2, just on the upgraded stack. Same goalposts: (1) bf16 base loads no-OOM, (2) vllm init succeeds, (3) first step <90s rollout, (4) steps 2-5 <4 min each.
 
+## Run 2 v4 (HF native + split-container resume) — 2026-05-12 evening
+
+v3 pilot hit `ModuleNotFoundError: No module named 'llguidance'` at vllm 0.8.5 init. The vllm-0.6→0.8 upgrade installed and ran with torch 2.6, but vllm 0.8 imports several optional grammar/structured-output deps eagerly at module-load time, all of which `--no-deps` excluded. Whack-a-mole pattern; fixable but with unknown depth.
+
+**Decision: abandon vLLM entirely.** We've gotten one useful result from the vLLM excursion (the Qwen3-architecture vs torch-version trap is now documented), but continuing to chase vllm dependencies past midnight is bad ROI when the fallback path is known-good.
+
+**Run 2 v4 plan:**
+
+| Knob | v3 (abandoned) | **v4** | Why |
+|---|---|---|---|
+| Generation | vLLM colocate | **HF model.generate** | known-good, no deps to chase |
+| Base model | bf16 fp16 | **4-bit BnB** (NF4) | exp_009 stack; full 24GB VRAM minus ~3GB weights |
+| Attention | FA2 explicit | implicit (SDPA) | flash-attn dropped from requirements |
+| torch | 2.6.0 | **2.5.1** | exp_009 stack, fewer install steps |
+| Epochs | 2 | **2 (split across 2 containers)** | one container = one epoch; resume between |
+| Checkpoint contents | adapter only (~130MB) | **full state ~250MB** | optimizer + scheduler + RNG so resume_from_checkpoint works |
+| Resume logic | none | **auto-pull latest checkpoint-N from HF** | DISABLE_RESUME=1 to override |
+
+**Per-step time on Run 1 (HF generate, no clipping):** 7-11 min. At 70 steps/epoch × ~10 min ≈ 12h per container.
+
+**Container 1 (tonight):** Fresh start. Trains ~70 steps (1 epoch) before DeadlineExceeded around hour 11-12. HF callback pushes `checkpoint-10, -20, ..., -70` to `qwen3-4b-thinking-grpo-v2-ckpt` along the way.
+
+**Container 2 (tomorrow morning):** Same launch command. Script's `_try_resume_from_hf` finds `checkpoint-70` on HF, downloads it, calls `trainer.train(resume_from_checkpoint=...)`. Trainer continues from step 70 with optimizer state + cosine LR schedule + RNG intact. Runs to step ~140 (epoch 2 complete) or DeadlineExceeded around step 130.
+
+**Launch command (unchanged across both containers):**
+```
+K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \
+  -- bash -c 'cd /home/$USER/151B_SP26_Competition && \
+              git pull origin main && \
+              pip install -q -r experiments/exp_010_grpo_v2/requirements.txt && \
+              HF_TOKEN=$(cat /home/$USER/.hf_token) \
+                python experiments/exp_010_grpo_v2/train_grpo_v2.py'
+```
+
+**Resume safety check (added to script):**
+- At startup, `_try_resume_from_hf()` queries the HF repo for `checkpoint-N` folders, picks max N, downloads to `./checkpoints/`. If repo empty/new → fresh start. If `DISABLE_RESUME=1` → fresh start regardless. Log line `(RESUMED)` vs `(FRESH)` makes this visible.
+
+**Pilot:** skipping for v4. The stack (HF generate + 4-bit BnB + Qwen3 base) is identical to exp_009 which is known-good. Going straight to full container.
+
 ---
 
 

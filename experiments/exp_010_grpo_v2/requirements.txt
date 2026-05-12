@@ -1,16 +1,11 @@
 # GRPO v2 deps on top of scipy-ml-notebook:stable.
-# Stack upgraded torch 2.5 → 2.6 to unblock vLLM Qwen3 support.
-# vllm 0.6.6 (the last torch-2.5-compatible vllm) only knows Qwen2ForCausalLM,
-# not Qwen3ForCausalLM. Qwen3 lands in vllm 0.7.3+, which needs torch 2.6+.
-# See notes.md "Run 2 v3 (torch 2.6 upgrade)" section for the full chain.
-#
-# flash-attn and vllm are NOT in this file because they need install flags
-# that pip refuses to combine with -r: flash-attn needs --no-build-isolation,
-# vllm needs --no-deps. Install them as separate pip commands after this file.
+# Run 2 v4: HF native generate (vLLM path abandoned due to Qwen3 support gap
+# in vllm 0.6 + cascading optional-dep import failures in vllm 0.8).
+# Reverted to torch 2.5.1 stack matching exp_009 known-good setup.
 
-torch==2.6.0
-torchvision==0.21.0
-torchaudio==2.6.0
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
 --extra-index-url https://download.pytorch.org/whl/cu124
 
 bitsandbytes>=0.46.1

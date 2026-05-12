@@ -8,29 +8,26 @@ Ported from exp_009/train_grpo.ipynb. Changes from exp_009:
   - save: Drive callback removed; HF push-on-save every 10 steps to ckpt repo
   - HF push at end (replaces Cell 10/11 of exp_009 notebook)
 
-Run 2 v3 (torch 2.6 + vLLM 0.8 for Qwen3 support):
-  - torch 2.5 → 2.6 (vllm 0.6.6 doesn't support Qwen3ForCausalLM)
-  - vllm 0.6.6 → 0.8.5 (first stable with Qwen3 support)
-  - flash-attn rebuilt against torch 2.6 (--no-build-isolation needed)
-  - 4-bit BnB removed; base loads in bf16/fp16 (vLLM can't read BnB).
-  - use_vllm=True, vllm_mode="colocate" → ~3-5x faster rollouts vs HF generate.
-  - Gradient checkpointing kept ON (tight memory on a5000 24GB next to vLLM).
-  - Flash Attention 2 explicit (attn_implementation="flash_attention_2").
+Run 2 v4 (HF native + split-container resume):
+  - vLLM path abandoned (vllm 0.6 doesn't support Qwen3; vllm 0.8 has cascading
+    optional-dep import failures even with --no-deps).
+  - Back to torch 2.5.1 + 4-bit BnB + HF model.generate (exp_009 known-good stack).
+  - epochs=2 won't fit one 12h container; HFPushAdapterCallback now saves the
+    FULL trainer state (adapter + optimizer + scheduler + RNG + trainer_state)
+    so a second container can resume_from_checkpoint and finish epoch 2.
+  - Container 1 (tonight): runs to step ~70 or DeadlineExceeded, whichever first.
+  - Container 2 (next morning): script auto-detects latest HF checkpoint, pulls
+    it down, resumes mid-training. Total elapsed: ~20-24h across two containers.
 
-Usage (DSMLP, a5000 single GPU, 12hr container).
-Install order is load-bearing — install the three groups separately:
-  1. requirements.txt: torch 2.6 + bitsandbytes/trl/peft/accelerate/etc.
-  2. flash-attn 2.7.x with --no-build-isolation (sees the freshly-installed torch)
-  3. vllm 0.8.5 with --no-deps (don't let it pull its own torch)
-
+Usage (DSMLP, a5000 single GPU, 12hr container):
     K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \\
         -- bash -c 'cd /home/$USER/151B_SP26_Competition && \\
                     git pull origin main && \\
                     pip install -q -r experiments/exp_010_grpo_v2/requirements.txt && \\
-                    pip install -q --no-build-isolation flash-attn==2.7.4.post1 && \\
-                    pip install -q --no-deps vllm==0.8.5 && \\
                     HF_TOKEN=$(cat /home/$USER/.hf_token) \\
                         python experiments/exp_010_grpo_v2/train_grpo_v2.py'
+
+To force fresh start (ignore HF checkpoints), set DISABLE_RESUME=1.
 
 Monitor:
     kubectl logs -f <pod_name>
@@ -60,16 +57,19 @@ from unittest.mock import MagicMock
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 # (BnB env var removed — Run 2 v3 doesn't use 4-bit BnB, weights are bf16 for vLLM)
 
-# Mock the *optional* trl deps that aren't installed (mergekit, llm_blender,
-# vllm_ascend). vllm itself is now a real install (use_vllm=True), so it must
-# NOT be mocked. ModuleSpec is needed for transformers' importlib.util.find_spec
-# on Python 3.11 (bare MagicMock fails with: __spec__ is not set).
+# Run 2 v4: use_vllm=False, so we mock vllm + its tree of optional imports
+# so TRL doesn't blow up trying to import them. ModuleSpec is needed for
+# transformers' importlib.util.find_spec on Python 3.11.
 def _mock(name):
     m = MagicMock()
     m.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
     sys.modules[name] = m
 
 for mod in [
+    "vllm", "vllm.sampling_params", "vllm.distributed",
+    "vllm.distributed.device_communicators",
+    "vllm.distributed.device_communicators.pynccl",
+    "vllm.distributed.utils",
     "vllm_ascend", "vllm_ascend.distributed",
     "vllm_ascend.distributed.device_communicators",
     "vllm_ascend.distributed.device_communicators.pyhccl",
@@ -115,45 +115,12 @@ if not HF_TOKEN:
 # ============================================================
 import torch
 from transformers import (
-    AutoModelForCausalLM, AutoTokenizer, TrainerCallback
+    AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainerCallback
 )
-from peft import LoraConfig, get_peft_model, PeftModel
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
 from datasets import Dataset
 from trl import GRPOConfig, GRPOTrainer
-from huggingface_hub import HfApi
-
-# Surface available vLLM-related GRPOConfig fields once so we can spot API
-# drift between TRL versions in the log (helps debug if a vllm_* kwarg fails).
-import dataclasses
-_vllm_fields = [f.name for f in dataclasses.fields(GRPOConfig) if "vllm" in f.name.lower()]
-print(f"GRPOConfig vLLM fields: {_vllm_fields}")
-
-# ============================================================
-# vLLM EngineArgs compat shim
-# TRL 0.21 passes kwargs (model_impl, possibly others) that vllm 0.6.6.post1's
-# EngineArgs doesn't accept. vllm 0.6.6 is pinned because it's the last release
-# supporting torch==2.5.1. Filter unknown kwargs so the LLM() construction in
-# GRPOTrainer succeeds. For model_impl specifically: vllm 0.6 always uses its
-# native engine (== model_impl="vllm" in 0.8+), so dropping the kwarg preserves
-# behavior. If we ever swap in a newer vllm/torch, this whole block becomes a
-# no-op (the kwargs all match).
-# ============================================================
-try:
-    import inspect
-    import vllm.engine.arg_utils as _au
-    _orig_engine_init = _au.EngineArgs.__init__
-    _allowed_engine_kwargs = set(inspect.signature(_orig_engine_init).parameters)
-    def _patched_engine_init(self, *args, **kwargs):
-        dropped = {k: kwargs.pop(k) for k in list(kwargs) if k not in _allowed_engine_kwargs}
-        if dropped:
-            print(f"[vllm-compat] dropped unsupported EngineArgs kwargs: {list(dropped)}",
-                  flush=True)
-        return _orig_engine_init(self, *args, **kwargs)
-    _au.EngineArgs.__init__ = _patched_engine_init
-    print(f"[vllm-compat] EngineArgs has {len(_allowed_engine_kwargs)} known fields; "
-          f"unknown kwargs will be filtered.")
-except Exception as e:
-    print(f"[vllm-compat] could NOT patch EngineArgs (use_vllm may fail): {e}")
+from huggingface_hub import HfApi, snapshot_download
 
 # Project-local modules
 from judger import Judger  # noqa: E402
@@ -170,30 +137,30 @@ random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 
 # ============================================================
-# 3. Tokenizer + fp16/bf16 base + LoRA wrap
-# vLLM colocate mode reads weights directly from the trainer's PEFT model, so
-# the base must be in a vLLM-compatible format (bf16/fp16, not BnB 4-bit).
-# Memory is tight on a5000 24GB: ~8GB base + ~11GB vLLM (gpu_mem_util=0.45) +
-# ~3-5GB activations/optim. Gradient checkpointing stays ON.
+# 3. Tokenizer + 4-bit base + LoRA wrap
+# Run 2 v4: back to BnB 4-bit (matches exp_009 known-good setup). On a5000 24GB
+# this gives plenty of headroom for HF generate rollouts at max_completion=4096.
 # ============================================================
-print(f"\nLoading tokenizer + {COMPUTE_DTYPE} model: {BASE_MODEL}")
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=COMPUTE_DTYPE,
+    bnb_4bit_use_double_quant=True,
+)
+
+print(f"\nLoading tokenizer + 4-bit model: {BASE_MODEL}")
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-# attn_implementation="flash_attention_2" requested explicitly; transformers
-# falls back to SDPA if the flash-attn wheel didn't build (we'll see a warning
-# in the log if so — at that point we should suspect the install step).
 model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
-    torch_dtype=COMPUTE_DTYPE,
+    quantization_config=bnb_config,
     device_map="auto",
     trust_remote_code=True,
-    attn_implementation="flash_attention_2",
+    torch_dtype=COMPUTE_DTYPE,
 )
-# Replaces prepare_model_for_kbit_training (which was BnB-specific).
-model.gradient_checkpointing_enable()
-model.enable_input_require_grads()
+model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
 
 lora_config = LoraConfig(
     r=TRAIN["lora_r"],
@@ -312,18 +279,14 @@ print("Reward self-test OK.\n")
 CKPT_DIR    = EXP_DIR / "checkpoints"
 ADAPTER_DIR = EXP_DIR / "adapter_final"
 MERGED_DIR  = EXP_DIR / "merged_final"
-if CKPT_DIR.exists():
-    shutil.rmtree(CKPT_DIR)
+# (Removed CKPT_DIR.rmtree — we may want to keep checkpoints across re-runs.
+#  The resume path writes its downloads into CKPT_DIR before trainer.train.)
 
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
-# Build GRPOConfig kwargs. vllm_* fields are added conditionally — TRL renamed
-# some between 0.16 and 0.21 (vllm_gpu_memory_utilization, vllm_mode, etc).
-# We only pass fields that the installed TRL actually defines, so the script
-# survives minor version drift.
-grpo_kwargs = dict(
+training_args = GRPOConfig(
     output_dir=str(CKPT_DIR),
     num_train_epochs=TRAIN["epochs"],
     per_device_train_batch_size=TRAIN["per_device_train_batch_size"],
@@ -346,21 +309,8 @@ grpo_kwargs = dict(
     max_completion_length=TRAIN["max_completion_length"],
     temperature=TRAIN["temperature_train"],
     beta=TRAIN["beta"],
-    use_vllm=TRAIN.get("use_vllm", False),
+    use_vllm=False,
 )
-_vllm_field_names = set(_vllm_fields)
-if TRAIN.get("use_vllm"):
-    for k, v in (
-        ("vllm_mode", TRAIN.get("vllm_mode", "colocate")),
-        ("vllm_gpu_memory_utilization", TRAIN.get("vllm_gpu_memory_utilization", 0.45)),
-        ("vllm_tensor_parallel_size", 1),
-        ("vllm_dtype", "auto"),
-    ):
-        if k in _vllm_field_names:
-            grpo_kwargs[k] = v
-        else:
-            print(f"  (skipping unsupported GRPOConfig field: {k}={v})")
-training_args = GRPOConfig(**grpo_kwargs)
 
 # Restore original generate, then wrap with eval()/train() flip so use_cache is
 # respected during rollouts (5× speedup). Same fix as exp_009 Cell 8.
@@ -386,19 +336,21 @@ class RewardLogCallback(TrainerCallback):
             print(f"  [step {state.global_step}] " + "  ".join(parts), flush=True)
 
 class HFPushAdapterCallback(TrainerCallback):
-    """Push the LoRA adapter to HF Hub after each save_steps save. Survives
-    DeadlineExceeded — without this, if the pod hits 12hr timeout mid-merge,
-    everything is lost. With it, we can recover from any saved checkpoint.
+    """Push the FULL trainer checkpoint to HF Hub after each save_steps save.
+    Run 2 v4 needs split-container resume: container 1 hits DeadlineExceeded
+    around step 70, container 2 next morning pulls the latest checkpoint and
+    calls trainer.train(resume_from_checkpoint=...) to finish epoch 2.
 
-    Pushes only adapter files (~130 MB) to a dedicated checkpoints repo.
-    Each checkpoint goes under its own subfolder so they don't overwrite.
+    For HF Trainer's resume to work correctly we need: adapter weights + config
+    + optimizer state + LR scheduler state + RNG state + trainer_state.json.
+    Total per-checkpoint upload is ~250MB (vs ~130MB adapter-only).
     """
     def __init__(self, hf_token, ckpt_repo):
         self.api = HfApi(token=hf_token)
         self.repo = ckpt_repo
         try:
             self.api.create_repo(ckpt_repo, private=True, exist_ok=True)
-            print(f"HF adapter-checkpoint repo ready: {ckpt_repo}", flush=True)
+            print(f"HF checkpoint repo ready: {ckpt_repo}", flush=True)
         except Exception as e:
             print(f"⚠ create_repo({ckpt_repo}) failed: {e}", flush=True)
 
@@ -407,20 +359,65 @@ class HFPushAdapterCallback(TrainerCallback):
         if not ckpt_dir.exists():
             return
         try:
+            # ignore_patterns instead of allow_patterns: push everything except
+            # bulky files we don't need. Specifically excludes any merged-model
+            # safetensors that might accidentally end up in the ckpt dir.
             self.api.upload_folder(
                 folder_path=str(ckpt_dir),
                 path_in_repo=f"checkpoint-{state.global_step}",
                 repo_id=self.repo,
-                allow_patterns=["adapter_*.json", "adapter_*.safetensors",
-                                "README.md", "training_args.bin"],
+                ignore_patterns=["*.bin.tmp", "global_step*"],
             )
-            print(f"  ↑ pushed checkpoint-{state.global_step} → "
+            print(f"  ↑ pushed checkpoint-{state.global_step} (full state) → "
                   f"https://huggingface.co/{self.repo}/tree/main/checkpoint-{state.global_step}",
                   flush=True)
         except Exception as e:
             # Never let a push failure kill training.
             print(f"  ⚠ HF push failed for checkpoint-{state.global_step}: {e}",
                   flush=True)
+
+
+def _try_resume_from_hf(ckpt_repo, hf_token, local_ckpt_dir):
+    """Look for the latest checkpoint-N folder in ckpt_repo. If found and
+    DISABLE_RESUME is not set, download to local_ckpt_dir and return the
+    local path for trainer.train(resume_from_checkpoint=...). Otherwise None.
+    """
+    if os.environ.get("DISABLE_RESUME"):
+        print("DISABLE_RESUME set — skipping HF checkpoint lookup.")
+        return None
+    if not ckpt_repo or not hf_token:
+        print("No adapter_checkpoints_repo or HF_TOKEN — fresh start.")
+        return None
+    api = HfApi(token=hf_token)
+    try:
+        # repo_exists raises if repo doesn't exist; create_repo with exist_ok
+        # also won't error if it exists, so we try to list its tree first
+        files = api.list_repo_files(repo_id=ckpt_repo)
+    except Exception as e:
+        print(f"No prior HF checkpoints found at {ckpt_repo} (or repo new): {e}")
+        return None
+    # Find unique checkpoint-N subdirs
+    steps = set()
+    for f in files:
+        if f.startswith("checkpoint-"):
+            try:
+                steps.add(int(f.split("/", 1)[0].split("-", 1)[1]))
+            except (ValueError, IndexError):
+                pass
+    if not steps:
+        print(f"HF repo {ckpt_repo} exists but has no checkpoint-N folders — fresh start.")
+        return None
+    latest = max(steps)
+    target_path = Path(local_ckpt_dir) / f"checkpoint-{latest}"
+    print(f"\n🔄 RESUMING from HF checkpoint-{latest} (downloading to {target_path}) ...")
+    snapshot_download(
+        repo_id=ckpt_repo,
+        allow_patterns=[f"checkpoint-{latest}/*"],
+        local_dir=str(local_ckpt_dir),
+        token=hf_token,
+    )
+    print(f"  ↓ checkpoint-{latest} downloaded. resume_from_checkpoint={target_path}")
+    return str(target_path)
 
 if not hasattr(model, "warnings_issued"):
     model.warnings_issued = {}
@@ -451,8 +448,13 @@ total_steps = steps_per_epoch * TRAIN["epochs"]
 tokens_per_epoch = (len(train_dataset) * TRAIN["num_generations"]
                     * TRAIN["max_completion_length"]) / 1e6
 
+# Resume lookup: if a prior checkpoint lives at ADAPTER_CKPT_REPO on HF,
+# download it and pass to trainer.train(resume_from_checkpoint=...). On a
+# fresh run (no prior checkpoints) this returns None and we start clean.
+resume_path = _try_resume_from_hf(ADAPTER_CKPT_REPO, HF_TOKEN, CKPT_DIR)
+
 print("\n" + "=" * 60)
-print("Starting GRPO training")
+print("Starting GRPO training" + ("  (RESUMED)" if resume_path else "  (FRESH)"))
 print(f"  Epochs:           {TRAIN['epochs']}")
 print(f"  Steps/epoch:      ~{steps_per_epoch}")
 print(f"  Total steps:      ~{total_steps}")
@@ -461,9 +463,11 @@ print(f"  LR:               {TRAIN['learning_rate']}")
 print(f"  BETA:             {TRAIN['beta']}")
 print(f"  num_generations:  {TRAIN['num_generations']}")
 print(f"  max_completion:   {TRAIN['max_completion_length']}")
+if resume_path:
+    print(f"  Resuming from:    {resume_path}")
 print("=" * 60 + "\n", flush=True)
 
-trainer.train()
+trainer.train(resume_from_checkpoint=resume_path) if resume_path else trainer.train()
 
 # Save final adapter
 model.save_pretrained(str(ADAPTER_DIR))
