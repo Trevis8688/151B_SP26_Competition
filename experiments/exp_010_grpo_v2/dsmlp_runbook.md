@@ -9,7 +9,7 @@ SSH'd to `dsmlp-login.ucsd.edu` and confirmed access.
 
 ```bash
 # from dsmlp-login.ucsd.edu
-launch.sh -g 1 -m 32 -c 8
+launch.sh -g 1 -v a5000 -m 48 -c 8
 # wait until prompt changes to trduong@trduong-XXXXX:~$
 ```
 
@@ -68,7 +68,7 @@ kubectl get pods   # confirm pod is gone, or delete with `kubectl delete pod <na
 ```bash
 # from dsmlp-login.ucsd.edu (NOT inside a pod)
 # K8S_TIMEOUT_SECONDS=43200 bumps the 6hr default to 12hr (max allowed)
-K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -m 32 -c 8 -B \
+K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \
   -- bash -c '
     set -e
     git clone https://github.com/Trevis8688/151B_SP26_Competition.git

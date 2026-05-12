@@ -67,7 +67,7 @@ DSMLP gotchas (from the IT services KB doc):
 ssh trduong@dsmlp-login.ucsd.edu
 
 # 2. On dsmlp-login (NOT inside a pod yet)
-launch.sh -g 1 -v a5000              # interactive, for pilot
+launch.sh -g 1 -v a5000 -m 48 -c 8   # 48 GB RAM — 16 GB default OOMs during 4-bit quant load
 # wait until prompt changes to trduong@trduong-XXXXX
 
 # 3. Inside the pod
@@ -81,7 +81,7 @@ python experiments/exp_010_grpo_v2/pilot.py 2>&1 | tee pilot.log
 # 4. If pilot passes, exit pod and launch full training as batch
 exit
 # back on dsmlp-login:
-K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 32 -c 8 -B \
+K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \
   -- bash -c '
     set -e
     cd ~ && git clone https://github.com/Trevis8688/151B_SP26_Competition.git
