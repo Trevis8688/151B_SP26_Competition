@@ -1,16 +1,17 @@
 {
-  "_comment": "Training hyperparams for exp_010 GRPO v2. NOT a Kaggle inference config — the inference config (model_id pointing at the trained HF repo) will be added after training completes.",
+  "_comment": "Training hyperparams for exp_010 GRPO v2 — DSMLP overnight Run 2. Pivoted from full-196 curriculum (Run 1 stalled: ~67% of steps had frac_reward_zero_std=1.0 due to all-clipping on Phase 1B prompts) to strict-70. See notes.md 'Run 1 post-mortem' section.",
   "base_model": "Qwen/Qwen3-4B-Thinking-2507",
   "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-v2",
-  "curriculum_file": "sweet_spot_ids.json",
-  "num_curriculum_prompts": 196,
+  "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-v2-ckpt",
+  "curriculum_file": "sweet_spot_ids_clean.json",
+  "num_curriculum_prompts": 70,
   "training": {
     "epochs": 2,
     "learning_rate": 1e-5,
     "beta": 0.02,
     "num_generations": 4,
     "max_prompt_length": 1024,
-    "max_completion_length": 6144,
+    "max_completion_length": 4096,
     "per_device_train_batch_size": 1,
     "gradient_accumulation_steps": 4,
     "lora_r": 16,
@@ -18,8 +19,8 @@
     "lora_dropout": 0.0,
     "temperature_train": 1.0,
     "save_strategy": "steps",
-    "save_steps": 25,
-    "save_total_limit": 3
+    "save_steps": 10,
+    "save_total_limit": 5
   },
   "reward": {
     "correctness_weight": 1.0,

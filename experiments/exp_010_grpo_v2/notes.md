@@ -1,8 +1,50 @@
 # Experiment: grpo_v2
 
-**Date:** 2026-05-11
-**Status:** Scaffolded — awaiting DSMLP runbook + training
+**Date:** 2026-05-11 (scaffold) / 2026-05-12 (Run 1 aborted, Run 2 pending)
+**Status:** Run 1 aborted — recipe pivoted from full-196 → strict-70
 **Baseline:** exp_009_grpo (local 55.95%, Kaggle **0.583**)
+
+## Run 1 post-mortem (2026-05-12)
+
+Launched 03:46 PT on a5000 with the full 196-prompt curriculum, max_completion=6144, 2 epochs. Killed at step 59/386 (~15% complete, 11h elapsed) after the data showed:
+
+| Symptom | Cause |
+|---|---|
+| 67% of steps had `frac_reward_zero_std=1.0` (no gradient signal) | All-clipping on Phase 1B prompts — all 4 generations hit 6144 cap with no `\boxed{}` → all reward=0, advantage=0 |
+| 11 min/step average (vs 80s pilot estimate) | Each clipped step generates 6144 tokens × 4 gens, dominating compute |
+| ETA 72h vs 12h timeout | Would have hit DeadlineExceeded at ~17% with negligible learning |
+
+**The original exp_010 hypothesis — "more data is better, 196 > 70" — was wrong.** The strict-70 curriculum's zero-clipping filter is load-bearing, not a nice-to-have. Phase 1B prompts need >6144 tokens to converge; including them throws away >60% of compute on dead gradient signal.
+
+## Run 2 plan (pending launch)
+
+Pivot back to exp_009's strict-70 curriculum, scale up the *training depth* instead of the data breadth.
+
+| Knob | exp_009 (actual) | Run 1 (aborted) | **Run 2** | Rationale |
+|---|---|---|---|---|
+| Curriculum file | `sweet_spot_ids_clean.json` (70) | `sweet_spot_ids.json` (196) | **`sweet_spot_ids_clean.json` (70)** | Restore zero-clipping filter; every step has reward variance |
+| Epochs | 0.8 (interrupted at ckpt-56) | 2 | 2 | 2.5× exp_009's effective update count (~35 vs ~14) |
+| LR | 2e-5 | 1e-5 | 1e-5 | Keep |
+| BETA | 0.01 | 0.02 | 0.02 | Keep — stronger KL anchor on smaller curriculum |
+| MAX_COMPLETION | 6144 | 6144 | **4096** | strict-70 prompts all fit under 4096 in Phase 1 sampling; halves step time |
+| save_steps | 4 (Drive-mirrored) | 25 | **10** | More frequent recoverable checkpoints |
+| Adapter HF push | none | none | **every save_steps** | NEW: pushes adapter to `qwen3-4b-thinking-grpo-v2-ckpt` on each save. Survives DeadlineExceeded |
+
+**Training math (Run 2):**
+- 70 prompts × 2 epochs / (1 × 4 grad accum) = ~35 update steps
+- Strict-70 was selected for zero-clipping at 4096 → typical step time on a5000 ~150-300s (pilot evidence)
+- 35 update steps × ~250s = ~9 hours wall time (under 12h timeout with comfortable margin)
+
+**Why this should beat exp_009:**
+- 2.5× more gradient updates (35 vs ~14)
+- LR is gentler (1e-5 vs 2e-5) → less collapse risk on extended training
+- BETA is stronger (0.02 vs 0.01) → MCQ skill is better protected
+- Same curriculum, same prompt distribution → directly comparable
+
+**Risk:** marginal yield from steps 15→35 is unknown. exp_009 might have already been plateauing at step 14. If so, gains will be modest. But cost is one a5000 night, which is cheap.
+
+---
+
 
 ## Hypothesis
 

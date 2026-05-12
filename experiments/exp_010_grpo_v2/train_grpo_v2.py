@@ -70,8 +70,9 @@ for mod in [
 EXP_DIR  = Path(__file__).resolve().parent
 REPO_DIR = EXP_DIR.parent.parent
 
-CONFIG     = json.loads((EXP_DIR / "config.json").read_text())
-CURRICULUM = json.loads((EXP_DIR / "sweet_spot_ids.json").read_text())
+CONFIG = json.loads((EXP_DIR / "config.json").read_text())
+CURRICULUM_FILE = CONFIG.get("curriculum_file", "sweet_spot_ids.json")
+CURRICULUM = json.loads((EXP_DIR / CURRICULUM_FILE).read_text())
 SWEET_IDS  = set(CURRICULUM["sweet_ids"])
 
 PUBLIC_JSONL = REPO_DIR / "data" / "public.jsonl"
@@ -83,8 +84,9 @@ sys.path.insert(0, str(EXP_DIR))
 
 print(f"REPO_DIR:       {REPO_DIR}")
 print(f"EXP_DIR:        {EXP_DIR}")
-print(f"Curriculum:     {len(SWEET_IDS)} prompts from sweet_spot_ids.json")
+print(f"Curriculum:     {len(SWEET_IDS)} prompts from {CURRICULUM_FILE}")
 print(f"Output repo:    {CONFIG['output_repo']}")
+print(f"Adapter ckpt repo: {CONFIG.get('adapter_checkpoints_repo', '(none)')}")
 
 BASE_MODEL = CONFIG["base_model"]
 TRAIN      = CONFIG["training"]
@@ -317,8 +319,53 @@ class RewardLogCallback(TrainerCallback):
                      for k, v in relevant.items()]
             print(f"  [step {state.global_step}] " + "  ".join(parts), flush=True)
 
+class HFPushAdapterCallback(TrainerCallback):
+    """Push the LoRA adapter to HF Hub after each save_steps save. Survives
+    DeadlineExceeded — without this, if the pod hits 12hr timeout mid-merge,
+    everything is lost. With it, we can recover from any saved checkpoint.
+
+    Pushes only adapter files (~130 MB) to a dedicated checkpoints repo.
+    Each checkpoint goes under its own subfolder so they don't overwrite.
+    """
+    def __init__(self, hf_token, ckpt_repo):
+        self.api = HfApi(token=hf_token)
+        self.repo = ckpt_repo
+        try:
+            self.api.create_repo(ckpt_repo, private=True, exist_ok=True)
+            print(f"HF adapter-checkpoint repo ready: {ckpt_repo}", flush=True)
+        except Exception as e:
+            print(f"⚠ create_repo({ckpt_repo}) failed: {e}", flush=True)
+
+    def on_save(self, args, state, control, **kwargs):
+        ckpt_dir = Path(args.output_dir) / f"checkpoint-{state.global_step}"
+        if not ckpt_dir.exists():
+            return
+        try:
+            self.api.upload_folder(
+                folder_path=str(ckpt_dir),
+                path_in_repo=f"checkpoint-{state.global_step}",
+                repo_id=self.repo,
+                allow_patterns=["adapter_*.json", "adapter_*.safetensors",
+                                "README.md", "training_args.bin"],
+            )
+            print(f"  ↑ pushed checkpoint-{state.global_step} → "
+                  f"https://huggingface.co/{self.repo}/tree/main/checkpoint-{state.global_step}",
+                  flush=True)
+        except Exception as e:
+            # Never let a push failure kill training.
+            print(f"  ⚠ HF push failed for checkpoint-{state.global_step}: {e}",
+                  flush=True)
+
 if not hasattr(model, "warnings_issued"):
     model.warnings_issued = {}
+
+callbacks = [RewardLogCallback()]
+ADAPTER_CKPT_REPO = CONFIG.get("adapter_checkpoints_repo")
+if ADAPTER_CKPT_REPO and HF_TOKEN:
+    callbacks.append(HFPushAdapterCallback(HF_TOKEN, ADAPTER_CKPT_REPO))
+else:
+    print("Note: HF push-on-save disabled (no adapter_checkpoints_repo or HF_TOKEN).",
+          flush=True)
 
 # ============================================================
 # 7. Train
@@ -329,7 +376,7 @@ trainer = GRPOTrainer(
     reward_funcs=[correctness_reward, format_reward],
     args=training_args,
     train_dataset=train_dataset,
-    callbacks=[RewardLogCallback()],
+    callbacks=callbacks,
 )
 
 steps_per_epoch = len(train_dataset) // (TRAIN["per_device_train_batch_size"]
