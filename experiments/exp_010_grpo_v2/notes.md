@@ -162,6 +162,31 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh -g 1 -v a5000 -m 48 -c 8 -B \
 
 **Pilot:** skipping for v4. The stack (HF generate + 4-bit BnB + Qwen3 base) is identical to exp_009 which is known-good. Going straight to full container.
 
+## Run 2 v5 (pure exp_009 replication) — 2026-05-12 late evening
+
+Honest review of v4 raised the right concern: it changed three hyperparams (LR, BETA, max_completion) AND added epochs simultaneously. Result would be uninterpretable — if v4 doesn't beat exp_009, we wouldn't know which lever to change.
+
+**v5 reverts to EXACT exp_009 hyperparams, single epoch to true completion (step 70 vs exp_009's aborted step 56).** Isolates the single variable "did exp_009 want more steps?"
+
+| Knob | exp_009 | v4 (abandoned) | **v5** |
+|---|---|---|---|
+| LR | 2e-5 | 1e-5 | **2e-5** (exp_009) |
+| BETA | 0.01 | 0.02 | **0.01** (exp_009) |
+| max_completion | 6144 | 4096 | **6144** (exp_009) |
+| Epochs | 0.8 (aborted at 56/70) | 2 (across 2 containers) | **1 (true to step 70)** |
+| Curriculum | strict-70 | strict-70 | strict-70 (same) |
+
+**ETA on a5000:** exp_009 ran on Colab L4 at ~15 min/step. a5000 is faster (more SMs + memory bandwidth, same SM 8.6 arch); expect 10-12 min/step. 70 steps × 11 min = ~13h. **Slight risk of overflow on 12h container** — if it hits timeout, the latest HF checkpoint (e.g., checkpoint-60) is still further along than exp_009 (checkpoint-56) and the analysis still holds.
+
+**Resume code remains in place** (harmless when no prior checkpoints exist), but **not relied on for this run** — first container will either complete step 70 or timeout near it, no need to span containers.
+
+**Decision tree from results:**
+- v5 ≥ 0.59 (≥ exp_009 + 0.7pp): GRPO scaling has more headroom. Next: try LR sweep on exp_009 recipe, or warm-start + re-sampled curriculum.
+- v5 ≈ exp_009 (0.578-0.588): GRPO at exp_009 hyperparams is plateaued. Next: pivot to rescue v2 (GRPO model as rescuer for free-form) — likely +1-2pp on top of v5.
+- v5 < exp_009: something regressed (a5000 vs L4 differences, or BnB nondeterminism). Diagnose before further GRPO work.
+
+**Skipping all changes from v4:** LR back to 2e-5, BETA back to 0.01, max_completion back to 6144, epochs back to 1. Resume code stays in script (no-op) since it's harmless.
+
 ---
 
 
