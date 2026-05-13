@@ -42,11 +42,21 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
 
     cd "$HOME/151B_SP26_Competition" && git pull origin main
 
-    # Re-install only judger deps. These are pure-Python so the user-site is fine.
-    pip install -q --user sympy "antlr4-python3-runtime==4.11"
+    # Container has transformers 4.44.2 + matching old tokenizers — too old for
+    # Qwen3 tokenizer.json format (fails with "data did not match any variant of
+    # untagged enum ModelWrapper"). Upgrade transformers + tokenizers to a
+    # Qwen3-supporting version. Pin numpy<2 so pip cannot pull numpy 2.x in as a
+    # transitive dep — that path is the scipy/sklearn ABI trap.
+    pip install -q --user \
+      "numpy<2" \
+      "transformers>=4.51,<5" \
+      "tokenizers>=0.21" \
+      sympy "antlr4-python3-runtime==4.11"
 
     echo "--- Python env sanity ---"
-    python -c "import torch, numpy, transformers; print(f\"torch={torch.__version__}  numpy={numpy.__version__}  transformers={transformers.__version__}\")"
+    python -c "import torch, numpy, transformers, tokenizers; print(f\"torch={torch.__version__}  numpy={numpy.__version__}  transformers={transformers.__version__}  tokenizers={tokenizers.__version__}\")"
+    # Verify scipy/sklearn still import (the numpy 2.x canary)
+    python -c "import scipy, sklearn; print(f\"scipy={scipy.__version__}  sklearn={sklearn.__version__}\")"
 
     # Resumable: if the previous pod wrote partial output, this picks up where it left off.
     HF_TOKEN=$(cat "$HOME/.hf_token") python scripts/sample_difficulty_v2.py
