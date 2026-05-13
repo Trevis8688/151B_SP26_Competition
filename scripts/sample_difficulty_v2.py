@@ -12,15 +12,19 @@ Output:
 
 Resumable: skip prompts already present in difficulty_samples_v2.jsonl.
 
-Run on DSMLP A5000 (24GB). Estimated runtime ~1.5h with vLLM, ~5-6h with HF.
+INFERENCE BACKEND: HF transformers generate, NOT vLLM. The scipy-ml-notebook:stable
+container has torch 2.5 + numpy 1.x baked in; upgrading torch to 2.6 (vllm 0.7+
+requirement for Qwen3 support) pulls numpy 2.x, which breaks the pre-compiled
+scipy/sklearn used by transformers. HF generate works out of the box.
+
+Runtime on DSMLP A5000 (24GB) with batch_size=2, ~2.5h with GQA, ~5h worst case.
 
 Usage (inside the container):
     cd ~/151B_SP26_Competition
-    pip install -q torch==2.6.0 --extra-index-url https://download.pytorch.org/whl/cu124
-    pip install -q vllm==0.8.5 sympy antlr4-python3-runtime==4.11
+    pip install -q --user sympy "antlr4-python3-runtime==4.11"
     HF_TOKEN=$(cat ~/.hf_token) python scripts/sample_difficulty_v2.py
 """
-import json, os, sys, re
+import json, os, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -36,10 +40,11 @@ NUM_SAMPLES    = 4
 TEMPERATURE    = 1.0
 TOP_P          = 0.95
 TOP_K          = 20
-MAX_TOKENS     = 6144
-MAX_MODEL_LEN  = 8192   # 6144 generation + prompt headroom (input p99 ~1000)
-GPU_MEM_UTIL   = 0.90
-CHUNK          = 80     # prompts per vLLM batch; 80*4=320 generations in flight
+MAX_NEW_TOKENS = 6144
+# batch_size = number of prompts per generate() call.
+# Total in-flight sequences = BATCH_PROMPTS * NUM_SAMPLES.
+# Qwen3-4B has GQA-8, so KV is small; batch=2 -> 8 seqs -> ~5GB KV at 6144 tok.
+BATCH_PROMPTS  = 2
 
 PUBLIC_PATH    = REPO / "data" / "public.jsonl"
 OUT_SAMPLES    = REPO / "data" / "difficulty_samples_v2.jsonl"
@@ -55,7 +60,7 @@ from prompts import (  # noqa: E402
     FEWSHOT_MATH, FEWSHOT_MCQ,
 )
 
-from transformers import AutoTokenizer  # noqa: E402
+from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
 from judger import Judger  # noqa: E402
 
 LETTERS = "ABCDEFGHIJ"
@@ -77,13 +82,44 @@ if OUT_SAMPLES.exists():
 
 todo = [r for r in all_rows if r["id"] not in done_ids]
 print(f"To sample: {len(todo)} prompts x {NUM_SAMPLES} = {len(todo)*NUM_SAMPLES} generations", flush=True)
-if not todo:
-    print("Nothing to sample. Jumping to curriculum build step.")
+
+# ---- load model + tokenizer ----
+hf_token = os.environ.get("HF_TOKEN")
+
+print(f"Loading tokenizer ...", flush=True)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True, token=hf_token)
+# Left-pad so generation continues from the prompt's right edge for all batch members
+tokenizer.padding_side = "left"
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+
+if todo:
+    bf16 = torch.cuda.is_bf16_supported()
+    dtype = torch.bfloat16 if bf16 else torch.float16
+    print(f"Loading model {MODEL_ID} in {dtype} ...", flush=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID,
+        torch_dtype=dtype,
+        device_map="auto",
+        trust_remote_code=True,
+        token=hf_token,
+    )
+    model.eval()
+    print(f"Model loaded. GPU mem: {torch.cuda.memory_allocated()/1e9:.2f} GB", flush=True)
+
+    gen_kwargs = dict(
+        do_sample=True,
+        temperature=TEMPERATURE,
+        top_p=TOP_P,
+        top_k=TOP_K,
+        max_new_tokens=MAX_NEW_TOKENS,
+        num_return_sequences=NUM_SAMPLES,
+        pad_token_id=tokenizer.pad_token_id,
+        use_cache=True,
+    )
 
 # ---- build chat-templated prompts ----
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
-prompts_text = []
-for ex in todo:
+def build_prompt(ex):
     is_mcq = bool(ex.get("options"))
     qt = ex["question"]
     if is_mcq:
@@ -91,30 +127,7 @@ for ex in todo:
         msgs = [{"role": "system", "content": SYSTEM_PROMPT_MCQ}] + FEWSHOT_MCQ + [{"role": "user", "content": qt}]
     else:
         msgs = [{"role": "system", "content": SYSTEM_PROMPT_MATH}] + FEWSHOT_MATH + [{"role": "user", "content": qt}]
-    prompts_text.append(
-        tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-    )
-
-# ---- load vLLM ----
-if todo:
-    from vllm import LLM, SamplingParams
-    bf16 = torch.cuda.is_bf16_supported()
-    dtype = "bfloat16" if bf16 else "float16"
-    print(f"Loading {MODEL_ID} via vLLM (dtype={dtype}, max_model_len={MAX_MODEL_LEN})...", flush=True)
-    llm = LLM(
-        model=MODEL_ID,
-        dtype=dtype,
-        max_model_len=MAX_MODEL_LEN,
-        gpu_memory_utilization=GPU_MEM_UTIL,
-        trust_remote_code=True,
-    )
-    sampling = SamplingParams(
-        n=NUM_SAMPLES,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        top_k=TOP_K,
-        max_tokens=MAX_TOKENS,
-    )
+    return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
 
 # ---- judger ----
 judger = Judger()
@@ -125,7 +138,6 @@ def normalize_gold(answer):
     return [str(answer)]
 
 def score_response(text, gold, options):
-    """Return True iff judger says the response's boxed answer matches gold."""
     gold_list = normalize_gold(gold)
     opts_per_gold = [options if options else []] * len(gold_list)
     try:
@@ -134,29 +146,51 @@ def score_response(text, gold, options):
         return False
 
 # ---- sample and score (streaming write for resumability) ----
+import time
 written = 0
+t0 = time.time()
+
 with open(OUT_SAMPLES, "a") as out:
-    for i in range(0, len(todo), CHUNK):
-        batch_rows = todo[i:i + CHUNK]
-        batch_prompts = prompts_text[i:i + CHUNK]
-        outputs = llm.generate(batch_prompts, sampling)
-        for ex, out_obj in zip(batch_rows, outputs):
+    for i in range(0, len(todo), BATCH_PROMPTS):
+        batch_rows = todo[i:i + BATCH_PROMPTS]
+        batch_prompts = [build_prompt(ex) for ex in batch_rows]
+        enc = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=False).to(model.device)
+        input_len = enc.input_ids.shape[1]
+
+        with torch.no_grad():
+            out_ids = model.generate(**enc, **gen_kwargs)
+        # out_ids: (BATCH * NUM_SAMPLES, input_len + max_new)
+        # Reshape to (BATCH, NUM_SAMPLES, seq_len)
+        seq_len = out_ids.shape[1]
+        out_ids = out_ids.view(len(batch_rows), NUM_SAMPLES, seq_len)
+        eos_id = tokenizer.eos_token_id
+        pad_id = tokenizer.pad_token_id
+
+        for j, ex in enumerate(batch_rows):
             is_mcq = bool(ex.get("options"))
             samples = []
             num_correct = 0
             num_clipped = 0
-            for o in out_obj.outputs:
-                text = o.text
-                length = len(o.token_ids)
-                clipped = (o.finish_reason == "length")
+            for k in range(NUM_SAMPLES):
+                gen_ids = out_ids[j, k, input_len:].tolist()
+                # Find end: first EOS or first pad
+                end = len(gen_ids)
+                for idx, t in enumerate(gen_ids):
+                    if t == eos_id or t == pad_id:
+                        end = idx
+                        break
+                gen_ids = gen_ids[:end]
+                text = tokenizer.decode(gen_ids, skip_special_tokens=True)
+                length = len(gen_ids)
+                # Clipped iff hit max_new_tokens without EOS (and didn't end on pad)
+                clipped = (length >= MAX_NEW_TOKENS)
                 ok = score_response(text, ex["answer"], ex.get("options"))
                 samples.append({
                     "length": length,
                     "clipped": clipped,
                     "correct": ok,
-                    "finish_reason": o.finish_reason,
                 })
-                if ok: num_correct += 1
+                if ok:      num_correct += 1
                 if clipped: num_clipped += 1
             row = {
                 "id": ex["id"],
@@ -168,8 +202,12 @@ with open(OUT_SAMPLES, "a") as out:
             }
             out.write(json.dumps(row) + "\n")
             written += 1
+
         out.flush()
-        print(f"  Saved {written}/{len(todo)} prompts so far", flush=True)
+        elapsed = time.time() - t0
+        rate = written / elapsed if elapsed > 0 else 0
+        eta = (len(todo) - written) / rate / 60 if rate > 0 else float("inf")
+        print(f"  [{written}/{len(todo)}] elapsed={elapsed/60:.1f}m  rate={rate*60:.1f}/min  ETA={eta:.1f}m", flush=True)
 
 print(f"\nSampling complete. {written} new rows written to {OUT_SAMPLES}", flush=True)
 
@@ -188,7 +226,6 @@ mcq_sweet = sum(1 for sid in sweet if id_is_mcq[sid])
 ff_sweet  = len(sweet) - mcq_sweet
 print(f"Sweet-spot v2: {len(sweet)} prompts ({mcq_sweet} MCQ, {ff_sweet} free-form)")
 
-# Distribution summary for sanity
 dist = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
 clipped_count = 0
 for r in all_stats:
@@ -207,9 +244,9 @@ with open(OUT_CURRICULUM, "w") as f:
         "num_correct_distribution": dist,
         "model": MODEL_ID,
         "num_samples": NUM_SAMPLES,
-        "max_tokens": MAX_TOKENS,
+        "max_new_tokens": MAX_NEW_TOKENS,
         "temperature": TEMPERATURE,
     }, f, indent=2)
 
 print(f"\nWrote curriculum: {OUT_CURRICULUM}")
-print(f"Done.")
+print("Done.")
