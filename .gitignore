@@ -10,3 +10,8 @@ LICENSE
 experiments/**/*_responses.jsonl
 experiments/**/results.jsonl
 experiments/**/submission.csv
+
+# Difficulty sampling raw outputs (large; only curate small derived ID lists)
+data/difficulty_samples*.jsonl
+experiments/**/difficulty_samples*.jsonl
+experiments/**/raw_outputs*.jsonl
