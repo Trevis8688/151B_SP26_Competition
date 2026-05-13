@@ -3,7 +3,7 @@
   "source_experiment": "exp_009_grpo",
   "stage1_dataset_name": "exp-009-grpo-responses",
   "rescue": {
-    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo",
+    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
     "_model_id_note": "exp_009 GRPO LoRA merged with Thinking-2507 base. If on HF Hub this is still adapter-only, merge locally first (peft.merge_and_unload + push_to_hub) or set rescue.adapter_id and add adapter-loading branch in rescue_notebook.",
     "max_tokens": 4096,
     "temperature": 0.1,

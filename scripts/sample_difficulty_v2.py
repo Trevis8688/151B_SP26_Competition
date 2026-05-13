@@ -35,7 +35,7 @@ print(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N
 print(f"torch={torch.__version__}  cuda={torch.version.cuda}  bf16={torch.cuda.is_bf16_supported()}", flush=True)
 
 # ---- config ----
-MODEL_ID       = "TrevorDuong/qwen3-4b-thinking-grpo"
+MODEL_ID       = "TrevorDuong/qwen3-4b-thinking-grpo-strict70"
 NUM_SAMPLES    = 4
 TEMPERATURE    = 1.0
 TOP_P          = 0.95

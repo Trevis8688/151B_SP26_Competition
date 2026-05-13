@@ -20,7 +20,7 @@ This experiment tests that lesson by swapping the rescuer model from base `Qwen3
 
 | Knob | exp_013 | exp_014 | Rationale |
 |---|---|---|---|
-| `rescue.model_id` | `Qwen/Qwen3-4B-Thinking-2507` | **`TrevorDuong/qwen3-4b-thinking-grpo`** | Test capability hypothesis |
+| `rescue.model_id` | `Qwen/Qwen3-4B-Thinking-2507` | **`TrevorDuong/qwen3-4b-thinking-grpo-strict70`** | Test capability hypothesis |
 | `rescue.max_tokens` | 4096 | 4096 | Hold constant |
 | `rescue.temperature` | 0.1 | 0.1 | Hold constant |
 | Rescue prompts | (unchanged from exp_013) | (unchanged) | Hold constant |
@@ -56,17 +56,7 @@ The rescue is upside-only by design (failed extractions leave the original respo
 
 **No notebook changes.** The generic `rescue_notebook.ipynb` at repo root reads this experiment's `config.json` via `RESCUE_EXPERIMENT`. To run:
 
-1. **Pre-flight: verify GRPO model is merged on HF Hub.** The rescue notebook uses vLLM which loads full models, not bare LoRA adapters. If `TrevorDuong/qwen3-4b-thinking-grpo` is currently adapter-only, merge first:
-   ```python
-   from peft import PeftModel
-   from transformers import AutoModelForCausalLM, AutoTokenizer
-   base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-4B-Thinking-2507", torch_dtype="auto")
-   peft = PeftModel.from_pretrained(base, "TrevorDuong/qwen3-4b-thinking-grpo")
-   merged = peft.merge_and_unload()
-   merged.push_to_hub("TrevorDuong/qwen3-4b-thinking-grpo-merged")
-   AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507").push_to_hub("TrevorDuong/qwen3-4b-thinking-grpo-merged")
-   ```
-   Then update `rescue.model_id` to the `-merged` repo.
+1. **Pre-flight: confirmed GRPO model is merged on HF Hub.** `TrevorDuong/qwen3-4b-thinking-grpo-strict70` is a single 8GB safetensors (not adapter-only), vLLM-loadable directly.
 
 2. Push this experiment dir to main (committed).
 3. On Kaggle: refresh `151b-experiments` dataset.
