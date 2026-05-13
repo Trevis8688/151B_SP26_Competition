@@ -30,11 +30,23 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
   -i ghcr.io/ucsd-ets/scipy-ml-notebook:stable \
   -- bash -c '
     set -e
+
+    # ---- IMPORTANT: wipe contaminated user-site ----
+    # A previous launch installed torch 2.6 + numpy 2.x + transformers into
+    # ~/.local/lib/python3.11/site-packages/ via `pip install --user`. Those
+    # files persist in the PVC across pods, and Python prefers them over
+    # /opt/conda. They break the container scipy/sklearn (numpy 1.x ABI).
+    # Wipe before doing anything so the pristine container env is used.
+    rm -rf "$HOME/.local/lib/python3.11/site-packages"
+    rm -rf "$HOME/.local/bin"
+
     cd "$HOME/151B_SP26_Competition" && git pull origin main
 
-    # Only judger deps. DO NOT install torch/vllm/numpy — the container has
-    # torch 2.5 + numpy 1.x that work with the pre-compiled scipy/sklearn.
+    # Re-install only judger deps. These are pure-Python so the user-site is fine.
     pip install -q --user sympy "antlr4-python3-runtime==4.11"
+
+    echo "--- Python env sanity ---"
+    python -c "import torch, numpy, transformers; print(f\"torch={torch.__version__}  numpy={numpy.__version__}  transformers={transformers.__version__}\")"
 
     # Resumable: if the previous pod wrote partial output, this picks up where it left off.
     HF_TOKEN=$(cat "$HOME/.hf_token") python scripts/sample_difficulty_v2.py
