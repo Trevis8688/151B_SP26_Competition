@@ -1,0 +1,22 @@
+{
+  "_comment": "exp_014 — rescue v2. Single-variable swap from exp_013: rescue model base Thinking-2507 → exp_009 GRPO model. Tests exp_013's lesson: 'free-form rescue is capability-limited, not budget-limited.' If the GRPO model rescues meaningfully more free-form (target +0.5pp local FF), capability hypothesis confirmed and we sweep rescuer further. If flat, rescue saturated — pivot.",
+  "source_experiment": "exp_009_grpo",
+  "stage1_dataset_name": "exp-009-grpo-responses",
+  "rescue": {
+    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo",
+    "_model_id_note": "exp_009 GRPO LoRA merged with Thinking-2507 base. If on HF Hub this is still adapter-only, merge locally first (peft.merge_and_unload + push_to_hub) or set rescue.adapter_id and add adapter-loading branch in rescue_notebook.",
+    "max_tokens": 4096,
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_input_tokens_from_stage1": 3000
+  },
+  "vllm": {
+    "max_model_len": 8192,
+    "max_num_seqs": 24,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  },
+  "notes": "Identical to exp_013 except rescue.model_id. Same rescue prompts, same source data (exp_009 missing_boxed), same token budget, same vLLM sizing. If MCQ rescue regresses vs exp_013 (likely: GRPO model less obedient to 'output ONLY the letter'), the next experiment is per-segment routing — base for MCQ, GRPO for free-form. That requires notebook changes; this experiment is the cheap test first."
+}
