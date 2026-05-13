@@ -4,6 +4,51 @@
 **Status:** Run 1 aborted — recipe pivoted from full-196 → strict-70
 **Baseline:** exp_009_grpo (local 55.95%, Kaggle **0.583**)
 
+## DSMLP cheat sheet
+
+After running `launch.sh ... -B`, the pod runs detached. To check on it:
+
+```bash
+# list all my pods (current + recent) — note the NAME and STATUS
+kubectl get pods
+
+# tail the live log of a specific pod (Ctrl-C to stop streaming; pod keeps running)
+kubectl logs -f trduong-NNNNNNN
+
+# dump everything so far (non-streaming, scrollable)
+kubectl logs trduong-NNNNNNN
+
+# just the last 200 lines (faster on big logs)
+kubectl logs --tail=200 trduong-NNNNNNN
+
+# last 200 lines + keep tailing
+kubectl logs --tail=200 -f trduong-NNNNNNN
+
+# kill a pod (failed pods don't auto-clean and hold the GPU quota slot)
+kubectl delete pod trduong-NNNNNNN
+```
+
+**STATUS column reference:**
+- `Running 1/1` — alive and training (or installing deps)
+- `Error 0/1` — exited with non-zero code; logs hold the traceback
+- `Completed 0/1` — exited cleanly (script finished)
+- `Pending` — waiting on quota or scheduling
+- `OOMKilled` — pod ran out of RAM; relaunch with bigger `-m N`
+
+**Useful one-liners:**
+```bash
+# how long has the run been alive?
+kubectl get pods                    # AGE column
+
+# is the training actually progressing? grep step lines
+kubectl logs trduong-NNNNNNN | grep "\[step" | tail -10
+
+# how much GPU memory is in use?
+kubectl exec -it trduong-NNNNNNN -- nvidia-smi
+```
+
+Batch-mode (`-B`) pods stay around after the script exits so logs remain readable — always `kubectl delete pod ...` when done. The 1-GPU quota blocks new launches until the prior pod is gone.
+
 ## Run 1 post-mortem (2026-05-12)
 
 Launched 03:46 PT on a5000 with the full 196-prompt curriculum, max_completion=6144, 2 epochs. Killed at step 59/386 (~15% complete, 11h elapsed) after the data showed:
