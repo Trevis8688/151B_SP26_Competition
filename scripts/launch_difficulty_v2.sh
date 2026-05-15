@@ -50,21 +50,35 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     cd "$HOME/151B_SP26_Competition" && git pull origin main
 
     # ---- clean venv (isolated from the container conda env) ----
+    # Self-healing: if the venv exists but has the wrong vllm, rebuild it. The
+    # first attempt installed unpinned vllm (0.20.x) which pulled torch 2.11 +
+    # cu130 and could not init CUDA on this node.
     VENV="$HOME/.venv-difficulty-v2"
+    if [ -d "$VENV" ] && ! "$VENV/bin/pip" freeze 2>/dev/null | grep -q "^vllm==0.8.5$"; then
+      echo "--- venv has wrong/missing vllm, rebuilding ---"
+      rm -rf "$VENV"
+    fi
     if [ ! -d "$VENV" ]; then
       echo "--- creating venv at $VENV ---"
       python -m venv "$VENV"
     fi
     source "$VENV/bin/activate"
 
-    # vllm pulls its own torch + numpy + transformers into the venv. Do NOT pin
-    # vllm -- latest supports Qwen3; the 0.8.5 referenced elsewhere is the version
-    # that broke the shared env. pip cache lives in the PVC, so relaunch is fast.
+    # The DSMLP node driver supports only CUDA 12.2 (reports 12020). Unpinned
+    # `pip install vllm` grabs the newest vllm, which pulls torch 2.11 + cu130
+    # (CUDA 13.x) -- a major-version jump that needs a 13.x driver and fails
+    # with "NVIDIA driver too old". Pin vllm==0.8.5 (first vllm with Qwen3 arch
+    # support; requires torch==2.6.0) and install torch explicitly from the
+    # cu124 index: CUDA 12.4 binaries run on the 12.2 driver via CUDA
+    # minor-version compatibility (12.x -> 12.x is supported; 13.x is not).
     pip install -q --upgrade pip
-    pip install -q vllm sympy "antlr4-python3-runtime==4.11"
+    pip install -q torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+    pip install -q vllm==0.8.5 sympy "antlr4-python3-runtime==4.11"
 
     echo "--- venv env sanity ---"
     python -c "import torch, vllm, transformers; print(f\"torch={torch.__version__}  vllm={vllm.__version__}  transformers={transformers.__version__}\")"
+    # Fail fast (seconds) if CUDA still cannot init, before the model download.
+    python -c "import torch; assert torch.cuda.is_available(); print(f\"CUDA OK: {torch.cuda.get_device_name(0)}\")"
 
     # ---- SMOKE TEST (LIMIT=10). Remove LIMIT=10 once throughput is confirmed. ----
     LIMIT=10 HF_TOKEN=$(cat "$HOME/.hf_token") python scripts/sample_difficulty_v2.py
