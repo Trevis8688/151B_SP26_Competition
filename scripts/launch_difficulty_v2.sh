@@ -75,7 +75,7 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     # minor-version compatibility (12.x -> 12.x is supported; 13.x is not).
     pip install -q --upgrade pip
     pip install -q torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-    pip install -q vllm==0.8.5 sympy "antlr4-python3-runtime==4.11"
+    pip install -q vllm==0.8.5 sympy "antlr4-python3-runtime==4.11" "transformers<5.0.0"
 
     echo "--- venv env sanity ---"
     python -c "import torch, vllm, transformers; print(f\"torch={torch.__version__}  vllm={vllm.__version__}  transformers={transformers.__version__}\")"
