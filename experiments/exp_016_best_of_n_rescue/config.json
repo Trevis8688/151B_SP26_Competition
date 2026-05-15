@@ -1,0 +1,43 @@
+{
+  "_comment": "exp_016 — best-of-N self-consistency on top of exp_014. N=3 stochastic samples per candidate, judger-equivalence clustering, >=2/3 majority vote, fall back to exp_014's answer on no-majority. Same GRPO model as exp_014 stage 1 — no prompt change, no training. Public eval uses wrong-cases; private submission uses --mode full or --mode missing (see notes.md).",
+
+  "source_experiment": "exp_014_rescue_v2_grpo",
+  "stage1_dataset_name": "exp-014-rescue-v2-grpo-responses",
+  "_dataset_note": "Kaggle dataset holding exp_014's public_responses.jsonl + private_responses.jsonl. Re-upload if exp_014 outputs change.",
+
+  "model": {
+    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
+    "_model_id_note": "Same model as exp_014 stage 1 — best-of-N is sampling-time diversity, not a different policy."
+  },
+
+  "sampling": {
+    "n_samples": 3,
+    "temperature": 1.0,
+    "_temperature_note": "T=1.0 matches exp_009 GRPO training temperature. T=0.9 risks staying in the wrong argmax basin.",
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_tokens_default": 4096,
+    "max_tokens_missing_boxed": 8192,
+    "_max_tokens_note": "exp_014 missing_boxed cases are all truncation under GRPO at 4096. Bump to 8192 (inside max_model_len=10240) so the chain actually closes."
+  },
+
+  "voting": {
+    "min_cluster_size": 2,
+    "_voting_note": "Cluster the 3 boxed answers by Judger.auto_judge pairwise equivalence (so 325*326 ≡ 105950 counts as agreement). Pick the largest cluster; replace exp_014's answer only if it has >=2 members. No-majority → keep exp_014's answer. This is the no-regression safety net."
+  },
+
+  "selection": {
+    "public_mode": "wrong",
+    "_public_mode_note": "On public.jsonl, candidate set = cases exp_014 got wrong (329 wrong_ff_boxed + 78 missing_boxed + 103 wrong_mcq).",
+    "private_mode": "full",
+    "_private_mode_note": "On private.jsonl, candidate set = ALL 943 questions (we have no ground truth). Switch to 'missing' for the ~78 missing_boxed-only quick run."
+  },
+
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  }
+}

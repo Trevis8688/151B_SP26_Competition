@@ -1,0 +1,256 @@
+% =======> To use this template:
+% => Edit authors in this file.
+% => Edit the paper's content itself in the respective sections. Edit as needed
+% => Add any references to references.bib (cite with \cite or \citet)
+% =================================================
+
+\documentclass{article}
+
+\PassOptionsToPackage{numbers, compress}{natbib}
+
+\usepackage[preprint]{neurips_2024}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\usepackage{float}
+\DeclareMathOperator{\R}{\mathbb{R}}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{hyperref}
+\usepackage{wrapfig}
+\usepackage[capitalize,noabbrev]{cleveref}
+\RequirePackage{doi}
+\usepackage{xcolor, colortbl}
+\definecolor{darkblue}{rgb}{0.19, 0.19, 0.62}
+\hypersetup{
+  colorlinks = true,
+  citecolor  = darkblue,
+  filecolor  = darkblue,
+  urlcolor   = darkblue,
+}
+\usepackage[textsize=tiny]{todonotes}
+
+
+\title{
+CSE 151B/251B Milestone Report
+}
+
+\author{%
+  Trevor Duong \\
+  Department of Computer Science and Engineering \\
+  University of California, San Diego \\
+  \texttt{trevord@sked.ai} \\
+}
+
+\begin{document}
+\maketitle
+
+
+\begin{abstract}
+We address the CSE~151B Spring~2026 Kaggle competition, which challenges participants to maximize the mathematical reasoning accuracy of a fixed model, Qwen3-4B-Thinking-2507, on a hidden test set of 943 mixed multiple-choice and free-form math problems. Starting from a baseline that scored 0.480 on the public leaderboard, we identified and fixed a critical context-length truncation bug that cut off 97\% of responses before a \verb|\boxed{}| answer could be emitted (+4.6~pp), and added MCQ few-shot prompting examples that further improved accuracy (+2.5~pp Kaggle, +2.7~pp locally). We also built a supervised fine-tuning pipeline (QLoRA) and are actively training a reinforcement learning policy via Group Relative Policy Optimization (GRPO). Our current best public Kaggle score is \textbf{0.551}.
+\end{abstract}
+
+
+% % % === Introduction
+\section{Introduction}
+\label{sec:intro}
+
+\paragraph{Problem Definition.}
+The competition task is mathematical question answering. Given a math problem expressed in natural language and LaTeX notation, a system must generate a free-form response whose final answer is enclosed in a \verb|\boxed{}| macro. There are two question sub-types: \emph{multiple-choice questions} (MCQ), where the answer is a single letter A--J selected from provided options, and \emph{free-form questions}, where the answer is one or more numeric or symbolic values. The public dataset contains 1,126~labeled questions (375~MCQ, 751~free-form); the private test set contains 943~unlabeled questions. All models are constrained to Qwen3-4B-Thinking-2507 --- a 4-billion parameter instruction-tuned reasoning model that produces an explicit chain-of-thought trace enclosed in \verb|<think>...</think>| tags before emitting a final answer.
+
+\paragraph{Problem Significance.}
+Mathematical reasoning is widely regarded as one of the most demanding benchmarks for language models, requiring multi-step deduction, symbolic manipulation, and reliable answer formatting. Practical downstream applications include AI-assisted tutoring, automated grading, scientific computation, and theorem-proving. Competition-level math (algebra, calculus, number theory, differential equations) represents a meaningful step beyond simple arithmetic and serves as a reliable proxy for general reasoning capability.
+
+\paragraph{Technical Challenge.}
+This project poses challenges across multiple dimensions:
+\begin{itemize}
+  \item \textbf{Context length.} Qwen3-4B-Thinking-2507 generates verbose chain-of-thought traces (often 4,000--8,000~tokens) inside \verb|<think>| blocks before the final answer. Default vLLM context windows truncate these traces, cutting off the \verb|\boxed{}| answer entirely.
+  \item \textbf{GPU memory.} The competition inference runtime is Kaggle T4$\times$2 (32~GB total VRAM, SM~7.5, no bfloat16, no Flash Attention~2). Larger context windows reduce batch throughput; majority voting (self-consistency) with $n{=}5$ caused an out-of-memory crash after 5.9~hours of runtime.
+  \item \textbf{Evaluation.} Free-form answers require SymPy-based symbolic equivalence checking to handle fractions, intervals, trigonometric identities, and multi-value answers. A missing or malformed \verb|\boxed{}| yields zero credit regardless of reasoning quality.
+  \item \textbf{Fine-tuning distribution shift.} Publicly available math training corpora (e.g., NuminaMath-CoT) are predominantly free-form. Fine-tuning without MCQ examples causes catastrophic forgetting on letter-selection format, as we observed empirically (Section~\ref{sec:results}).
+  \item \textbf{Model constraint.} Competition rules prohibit swapping to a larger model, making every percentage-point gain harder to achieve; prompt engineering and fine-tuning must extract maximum value from a single 4B-parameter checkpoint.
+\end{itemize}
+
+\paragraph{Contributions.}
+The starter code used \texttt{max\_model\_len=6144} in vLLM, which we measured truncates 97\% of responses before \verb|\boxed{}| is emitted. Our contributions to date are:
+\begin{itemize}
+  \item \textbf{Truncation fix (+4.6~pp Kaggle):} Increasing \texttt{max\_model\_len} from 6,144 to 10,240 raised the Kaggle score from 0.480 to 0.526.
+  \item \textbf{MCQ few-shot prompting (+2.5~pp Kaggle):} Three MCQ worked examples~\cite{brown2020language} added to the system prompt improved MCQ accuracy from an estimated ${\sim}$52\% to 63.2\% and pushed the Kaggle score to 0.551.
+  \item \textbf{Prompt engineering characterization:} Eight prompt variants tested; empirical ceiling of ${\sim}$55\% established, motivating the shift to fine-tuning.
+  \item \textbf{SFT pipeline and failure analysis:} A QLoRA~\cite{dettmers2024qlora} supervised fine-tuning pipeline revealed that training-data imbalance (free-form heavy) causes MCQ catastrophic forgetting.
+  \item \textbf{GRPO RL pipeline (in progress):} A GRPO~\cite{shao2024deepseekmath} training loop using the competition judger as reward signal, targeting problems the base model currently fails.
+\end{itemize}
+
+
+% % % === Related Work
+\section{Related Work}
+\label{sec:relatedwork}
+
+\paragraph{Chain-of-thought reasoning.}
+\citet{wei2022chain} showed that prompting large language models to produce intermediate reasoning steps substantially improves accuracy on multi-step arithmetic and symbolic reasoning tasks. Qwen3-4B-Thinking-2507 extends this idea by training the model to emit a scratchpad inside \verb|<think>| tags unconditionally, decoupling the reasoning trace from the final answer.
+
+\paragraph{Few-shot prompting.}
+\citet{brown2020language} demonstrated that providing a small number of input-output examples in the prompt (few-shot in-context learning) enables large language models to adapt to new tasks without weight updates. We apply this specifically to the MCQ sub-task, where worked examples anchor the letter-selection output format.
+
+\paragraph{Parameter-efficient fine-tuning.}
+\citet{hu2022lora} introduced LoRA, which injects trainable low-rank adapter matrices into frozen pretrained weights. \citet{dettmers2024qlora} extended this with 4-bit quantized base weights, enabling fine-tuning of large models on consumer-grade hardware. We use QLoRA with rank~16 to adapt Qwen3-4B-Thinking-2507 within Colab GPU constraints.
+
+\paragraph{RL for mathematical reasoning.}
+\citet{shao2024deepseekmath} introduced GRPO (Group Relative Policy Optimization) as a memory-efficient alternative to PPO for training language models with outcome-based rewards, demonstrating large gains on competition math benchmarks using a verifiable correctness reward. We apply the same principle using our competition judger as the reward signal.
+
+\paragraph{Self-improvement via filtering.}
+\citet{zelikman2022star} proposed bootstrapping reasoning by filtering model-generated solutions to those that reach the correct answer and fine-tuning on them iteratively. Our SFT training data (correct responses from the base model on \texttt{public.jsonl}) follows this paradigm.
+
+
+% % % === Methods
+\section{Methods}
+\label{sec:methods}
+
+\paragraph{Problem Setting.}
+Let $x$ denote an input question rendered as a chat-formatted prompt (system instructions plus optional few-shot examples), and $y$ the model's free-form text response. The task is to maximize:
+\[
+  \mathbb{E}_{(x,a) \sim \mathcal{D}}\bigl[\mathbf{1}[\textsc{Judge}(\hat{a}(y),\, a) = \textsc{True}]\bigr],
+\]
+where $a$ is the ground-truth answer, $\hat{a}(y)$ is the answer extracted from \verb|\boxed{}| in $y$, and $\textsc{Judge}$ is the competition's SymPy-based equivalence checker. At inference time $y$ is generated autoregressively with temperature sampling; there is no differentiable loss. For fine-tuning we optimize:
+\begin{itemize}
+  \item \textbf{SFT (exp\_008):} Cross-entropy loss on $(x, y^{*})$ pairs where $y^{*}$ are correct responses.
+  \item \textbf{GRPO (exp\_009):} Policy gradient with group-normalized reward $R(y) = r_{\text{correct}}(y) + 0.1\cdot r_{\text{format}}(y)$, where $r_{\text{correct}} \in \{0, 1\}$ indicates judger success and $r_{\text{format}} \in \{0, 1\}$ indicates \verb|\boxed{}| presence after \verb|</think>|.
+\end{itemize}
+
+The dataset is split as follows: 200~questions held out as a local dev set (100~MCQ, 100~free-form, seed~42) for fast iteration; the remaining 926~public questions serve as GRPO training data; the 943~private questions form the competition test set.
+
+\paragraph{Idea Summary.}
+We adopt a progressive strategy that addresses the largest failure modes first.
+
+\emph{Phase 1 --- Infrastructure (exp\_000, exp\_001).} The starter code's \texttt{max\_model\_len=6144} truncated 97\% of responses before \verb|\boxed{}| was emitted. Fixing this to 10,240 was the single highest-value change (+4.6~pp Kaggle). This underscores a key principle: profiling output-length distributions before any model change is essential.
+
+\emph{Phase 2 --- Prompt engineering (exp\_002--exp\_007).} We tested eight prompt variants. MCQ few-shot examples were the only change that improved Kaggle score; all others regressed or were flat. An empirical ceiling of ${\sim}$55\% was established, consistent with the hypothesis that 4B-parameter model capacity --- not prompting strategy --- is the binding constraint beyond this point.
+
+\emph{Phase 3 --- Fine-tuning (exp\_008, exp\_009).} SFT on NuminaMath-CoT collapsed MCQ accuracy by 22~pp due to a 23:1 free-form:MCQ imbalance in the training data. GRPO addresses this by training on the competition's own mixed distribution --- both MCQ and free-form questions receive reward signal simultaneously, avoiding the imbalance issue.
+
+
+% % % === Experiments
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Baselines}
+\label{sec:baselines}
+We compare against the following configurations:
+\begin{itemize}
+  \item \textbf{exp\_000 (Starter baseline):} Qwen3-4B-Thinking-2507 in 4-bit quantization via BitsAndBytes, vLLM with \texttt{max\_model\_len=6144}, \texttt{max\_tokens=8192}, temperature 0.6, top-p 0.95. No few-shot examples. Kaggle: 0.480.
+  \item \textbf{exp\_001 (Context-length fix):} Identical to exp\_000 except \texttt{max\_model\_len=10240}, \texttt{max\_num\_seqs=32}. Kaggle: 0.526.
+  \item \textbf{exp\_002 (\textbackslash{}boxed\{\} enforcement):} exp\_001 plus explicit enforcement language in the system prompt (e.g., ``you must always end with \textbackslash{}boxed\{\}''). Kaggle: 0.491 (regressed --- wording raised the missing-boxed rate from 23\% to 32\%).
+\end{itemize}
+
+\subsection{Evaluation}
+\label{sec:evaluation}
+\textbf{Kaggle leaderboard:} The competition scorer extracts the content of the first \verb|\boxed{}| in each response. For MCQ it checks exact letter match; for free-form it applies SymPy-based symbolic equivalence.
+
+\textbf{Local scoring:} We run \texttt{scripts/score.py} against \texttt{public.jsonl} (1,126~questions with ground-truth answers), invoking \texttt{Judger.auto\_judge()} for symbolic equivalence. This handles LaTeX fractions, decimals, intervals, set notation, and multi-value answers (comma-separated inside a single \verb|\boxed{}|).
+
+\textbf{Dev split:} For fast iteration we use a stratified 200-question dev split (100~MCQ, 100~free-form) that runs in ${\sim}$20~minutes on Kaggle T4$\times$2.
+
+\subsection{Implementation Details}
+\label{sec:implementation_details}
+
+\textbf{Inference platform.} All Kaggle submissions run on T4$\times$2 (32~GB total, SM~7.5, no bfloat16). We use vLLM~\cite{kwon2023efficient} with \texttt{dtype="float16"}, \texttt{tensor\_parallel\_size=1} (TP=2 causes CUDA graph profiling crashes on SM~7.5), \texttt{max\_model\_len=10240}, temperature 0.6, top-p 0.95, top-k 20.
+
+\textbf{Training platform.} SFT (exp\_008) ran on Colab Pro A100~80GB. GRPO (exp\_009) targets Colab Pro L4~24GB. Both use 4-bit NF4 quantized base weights with bfloat16 compute dtype.
+
+\textbf{Prompt configuration (current best).} The system prompt instructs the model to solve step-by-step and place the final answer in \verb|\boxed{}|. For MCQ, it instructs output of only the letter. Three worked MCQ examples~\cite{brown2020language} are prepended as few-shot turns. No math few-shot examples are included --- we found they cause the model to regurgitate example answer values verbatim on uncertain problems.
+
+\textbf{SFT hyperparameters (exp\_008).} QLoRA rank~16, $\alpha{=}32$, target modules: q/k/v/o\_proj and gate/up/down\_proj; 4-bit NF4 base; 2~epochs; batch size~16; learning rate $2{\times}10^{-4}$ with cosine decay; training data: 5,000~NuminaMath-CoT examples + 623~correct responses from exp\_004 (${\sim}$5,600 total after shuffling and filtering to 1,024-token max).
+
+\textbf{GRPO hyperparameters (exp\_009).} LoRA rank~16, $\alpha{=}32$; 4-bit NF4 base; 1~epoch; per-device batch~1 with gradient accumulation~4 (effective 4~prompts/step); 4--8~generations per prompt; learning rate $5{\times}10^{-6}$; KL penalty $\beta{=}0.04$; training temperature~1.0; TRL \texttt{GRPOTrainer} with HF native generation backend.
+
+\subsection{Results}
+\label{sec:results}
+
+\begin{table}[h]
+  \caption{Summary of all experiments. Local scores use \texttt{Judger.auto\_judge()} on \texttt{public.jsonl} (1,126~q) or \texttt{dev.jsonl} (200~q) as noted. Kaggle scores are on the private 943-question test set. Dashes indicate runs not evaluated on that split.}
+  \label{tab:results}
+  \centering
+  \begin{tabular}{llccc}
+    \toprule
+    Exp & Description & Kaggle & Local & Status \\
+    \midrule
+    exp\_000 & Starter baseline & 0.480 & --- & Complete \\
+    exp\_001 & Context-length fix & 0.526 & --- & Complete \\
+    exp\_002 & \verb|\boxed{}| enforcement wording & 0.491 & --- & Complete \\
+    exp\_003 & Self-consistency ($n{=}5$) & OOM & --- & Abandoned \\
+    exp\_004 & MCQ few-shot (3 examples) & --- & 55.33\% (public) & Complete \\
+    exp\_005 & Multi-value format enforcement & 0.420 & 42.98\% (public) & Complete \\
+    exp\_006 & Baseline replay (exp\_004 prompts, full split) & \textbf{0.551} & --- & Complete \\
+    exp\_007 & Math few-shot (1 example) & --- & --- & Abandoned \\
+    exp\_008 & QLoRA SFT (NuminaMath + public correct) & --- & 46.00\% (dev) & Complete \\
+    exp\_009 & GRPO RL (correctness reward) & --- & --- & In progress \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Truncation was the dominant baseline failure.}
+The starter code's \texttt{max\_model\_len=6144} and \texttt{max\_tokens=8192} created a configuration where the allocated generation budget exceeded the total context window. vLLM silently truncated outputs, cutting off responses before \verb|\boxed{}|. Increasing \texttt{max\_model\_len} to 10,240 raised the Kaggle score by 4.6~pp (0.480$\to$0.526) with no other changes.
+
+\paragraph{MCQ few-shot prompting helps; enforcement wording backfires.}
+Adding explicit \verb|\boxed{}| enforcement language (exp\_002) regressed 3.5~pp, increasing the missing-boxed rate from ${\sim}$23\% to ${\sim}$32\%. In contrast, three worked MCQ examples (exp\_004) raised MCQ accuracy to 63.2\% and overall local accuracy to 55.33\%, yielding a Kaggle score of 0.551 on a clean full-split submission (exp\_006).
+
+\paragraph{Multi-value format constraints cause regression.}
+Instructing the model to use $N$ separate \verb|\boxed{}| delimiters for $N$ sub-answers (exp\_005) triggered a ``Final Answer'' summary section in outputs, doubling boxed expressions and causing judger length-mismatch failures. Kaggle score dropped to 0.420 ($-$13.1~pp from exp\_001). Any formatting instruction that alters the \emph{number} of \verb|\boxed{}| delimiters risks judger mismatch and should be avoided.
+
+\paragraph{SFT with imbalanced data causes MCQ catastrophic forgetting.}
+QLoRA fine-tuning (exp\_008) reduced overall dev accuracy by 9.3~pp (55.33\%$\to$46.0\%). MCQ accuracy collapsed 22.2~pp (63.2\%$\to$41.0\%) while free-form was nearly flat ($-$0.4~pp). With ${\sim}$5,000 free-form NuminaMath-CoT examples and only ${\sim}$237 MCQ correct responses, the training ratio was ${\sim}$23:1. A secondary factor was inadvertently using the non-thinking \texttt{Qwen/Qwen3-4B} base instead of \texttt{Qwen3-4B-Thinking-2507}, which lacks the \verb|<think>| behavioral prior the system prompt assumes.
+
+
+% % % === Discussion
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Achievements.}
+Starting from 0.480, we improved the public Kaggle score to \textbf{0.551} (+7.1~pp) through infrastructure fixes and prompt engineering. The truncation fix (+4.6~pp) demonstrates that profiling output-length distributions before any model change is critical; in our case, the starter code's context-window misconfiguration was the dominant failure mode. The MCQ few-shot result (+2.5~pp Kaggle) is the highest-value prompt change found after testing eight variants. Together these contributions establish a reproducible baseline for the fine-tuning phase.
+
+\paragraph{Bottlenecks and Mitigation.}
+\begin{enumerate}
+  \item \textbf{GPU memory on Kaggle T4$\times$2.} Self-consistency ($n{=}5$, exp\_003) crashed with CUDA OOM after 5.9~hours. Tensor parallelism (TP=2) triggers a CUDA graph profiling bug on SM~7.5. Mitigation: \texttt{tensor\_parallel\_size=1}; majority voting deferred until a memory-efficient implementation is available.
+  \item \textbf{Wrong base model in exp\_008.} Training from the non-thinking \texttt{Qwen3-4B} variant compounded MCQ collapse. All future fine-tuning uses \texttt{Qwen/Qwen3-4B-Thinking-2507} as the base.
+  \item \textbf{Prompt engineering ceiling.} After eight prompt variants, accuracy saturated at ${\sim}$55\% locally. Further gains require weight updates.
+\end{enumerate}
+
+\paragraph{Plans Forward.}
+\begin{itemize}
+  \item \textbf{exp\_009 GRPO (immediate):} Full GRPO training on ${\sim}$926 public questions using the competition judger as correctness reward. A 50-prompt pilot validates reward trend before committing to a full run.
+  \item \textbf{Hybrid routing (if GRPO improves free-form selectively):} Route MCQ to the base model (63.2\% MCQ accuracy) and free-form to the GRPO-trained model, combining both without retraining.
+  \item \textbf{SFT v2 (fallback):} Retry SFT from \texttt{Qwen3-4B-Thinking-2507} with a balanced training mix, ensuring MCQ examples are adequately represented.
+  \item \textbf{STaR-style iteration~\cite{zelikman2022star}:} If GRPO succeeds, run the trained model on the full public set, collect new correct responses, and retrain. Each round expands the correct-response pool.
+\end{itemize}
+
+\paragraph{Team Responsibilities.}
+This is a solo project. All components --- infrastructure setup, experiment design, prompt engineering, fine-tuning pipelines, results analysis, and this report --- were completed by Trevor Duong.
+
+\paragraph{Timelines.}
+\begin{itemize}
+  \item Week 1--2 (Apr 7--20): Environment setup, baseline run, truncation fix (exp\_000, exp\_001). \textit{Complete.}
+  \item Week 3 (Apr 21--27): Prompt engineering sweep (exp\_002--exp\_007). \textit{Complete.}
+  \item Week 4 (Apr 28 -- May 4): QLoRA SFT (exp\_008), GRPO pipeline (exp\_009). SFT complete; GRPO training in progress.
+  \item Week 5--6 (May 5--18): Evaluate GRPO; iterate (STaR round 2, hybrid routing). Submit best result.
+  \item Week 7--8 (May 19 -- Jun 1): Additional RL or SFT iterations based on Week 5--6 findings. Ablations.
+  \item Week 9--10 (Jun 2--8): Final submission and final report writeup.
+\end{itemize}
+
+
+\section*{LLM Usage}
+Claude (Anthropic) was used extensively throughout this project in the following roles: (1)~scaffolding experiment boilerplate (\texttt{config.json}, \texttt{prompts.py}, \texttt{notes.md} templates); (2)~debugging vLLM configuration issues on the Kaggle T4 runtime (CUDA graph crashes, V1/V0 engine flags, tensor parallelism); (3)~writing and reviewing the QLoRA and GRPO training notebooks; (4)~analyzing experiment results and proposing next steps; and (5)~assisting with the writing and structure of this report. All empirical claims are grounded in actual experiment outputs; the author takes full responsibility for the content.
+
+
+% % % === ACKNOWLEDGMENTS AND REFERENCES START
+\bibliography{references.bib}
+\bibliographystyle{plainnat}
+
+\end{document}
