@@ -39,16 +39,24 @@ After difficulty_v2 finishes, inspect the MCQ/free-form split of intermediate-di
 | 0.608–0.615 | Flat vs exp_014 | GRPO likely exhausted; pivot to SFT v2 |
 | < 0.608 | Regression | Discard; pivot to SFT v2 |
 
+## GPU notes
+
+**difficulty_v2 sampling (in progress 2026-05-14):** running on A5000 (24GB) — sufficient for vLLM inference on 4B model.
+
+**exp_015 GRPO training: request A6000 (48GB) first.** A5000 is tight at max_completion=4096 (weights + LoRA optimizer states + 4096-token rollouts × 4 generations). A6000 has 2× memory, same sm 8.6 architecture (bfloat16 + FA2 both supported), and would likely enable `use_vllm=True` in GRPOTrainer (faster rollout generation). If A6000 quota is saturated, fall back to A5000 — max_completion=4096 should clear the OOM that killed exp_010.
+
+Launch flag change: `-v a5000` → `-v a6000`. No other script changes needed.
+
 ## Implementation plan
 
-1. Wait for difficulty_v2 JSONL on DSMLP
+1. ~~Wait for difficulty_v2 JSONL on DSMLP~~ (running on A5000 as of 2026-05-14)
 2. Filter to 1–3/4 correct IDs → `experiments/exp_015_grpo_pass2/curriculum_v2.json`
 3. Write training script (adapt `exp_010/train_grpo_v2.py`):
    - `base_model = TrevorDuong/qwen3-4b-thinking-grpo-strict70`
    - `ref_model` unset (TRL default = base_model → true continuation)
    - `max_completion_length = 4096`
    - `curriculum_file = curriculum_v2.json`
-4. Push to main → SSH DSMLP → launch A5000 batch pod
+4. Push to main → SSH DSMLP → launch **A6000** batch pod (fall back to A5000 if unavailable)
 5. Push adapter checkpoints to HF Hub every 10 steps (survives DeadlineExceeded)
 6. After training: merge adapter → push merged model → run Kaggle inference
 
