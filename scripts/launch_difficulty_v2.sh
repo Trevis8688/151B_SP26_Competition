@@ -33,7 +33,7 @@ set -e
 
 # --- launch ---
 K8S_TIMEOUT_SECONDS=43200 launch.sh \
-  -g 1 -v a5000 -m 48 -c 8 -B \
+  -g 1 -v a6000 -m 48 -c 8 -B \
   -i ghcr.io/ucsd-ets/scipy-ml-notebook:stable \
   -- bash -c '
     set -e

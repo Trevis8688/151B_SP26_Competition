@@ -49,10 +49,10 @@ MAX_NEW_TOKENS = 6144
 # and let the scheduler saturate the GPU. We still chunk (rather than one giant
 # generate() call) so the JSONL is flushed periodically -> resumable if the 12h
 # container times out mid-run.
-CHUNK_PROMPTS  = 48          # 48 prompts x 4 samples = 192 seqs per generate() call
+CHUNK_PROMPTS  = 24          # 24 prompts x 4 samples = 96 seqs per call (was 48→OOM on A5000 logit sort)
 MAX_MODEL_LEN  = 8192        # input p99 ~851 tok + 6144 gen, 8192 leaves headroom
-GPU_MEM_UTIL   = 0.90
-TENSOR_PARALLEL = 1          # DSMLP launches with -g 1 (single A5000). NOT 2.
+GPU_MEM_UTIL   = 0.85        # reduced from 0.90; leaves headroom for logit sort on A5000 fallback
+TENSOR_PARALLEL = 1          # DSMLP launches with -g 1. NOT 2.
 
 # Smoke test: LIMIT=N caps the run to N prompts so you can eyeball throughput
 # before committing to the full ~2-4h job.
