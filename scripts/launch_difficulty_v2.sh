@@ -47,7 +47,9 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     rm -rf "$HOME/.local/lib/python3.11/site-packages"
     rm -rf "$HOME/.local/bin"
 
-    cd "$HOME/151B_SP26_Competition" && git pull origin main
+    # fetch + reset instead of pull: works in detached HEAD and when no tracking
+    # branch is configured (common in PVC-persisted container workdirs).
+    cd "$HOME/151B_SP26_Competition" && git fetch origin main && git reset --hard FETCH_HEAD
 
     # ---- clean venv (isolated from the container conda env) ----
     # Self-healing: if the venv exists but has the wrong vllm, rebuild it. The
