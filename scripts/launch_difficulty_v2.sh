@@ -82,12 +82,12 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     # Fail fast (seconds) if CUDA still cannot init, before the model download.
     python -c "import torch; assert torch.cuda.is_available(); print(f\"CUDA OK: {torch.cuda.get_device_name(0)}\")"
 
-    # ---- SMOKE TEST (LIMIT=10). Remove LIMIT=10 once throughput is confirmed. ----
-    LIMIT=10 HF_TOKEN=$(cat "$HOME/.hf_token") python scripts/sample_difficulty_v2.py
+    # ---- FULL RUN (smoke test passed 2026-05-14, LIMIT removed) ----
+    HF_TOKEN=$(cat "$HOME/.hf_token") python scripts/sample_difficulty_v2.py
   '
 
 echo ""
-echo "Pod launched (SMOKE TEST mode, LIMIT=10)."
+echo "Pod launched (FULL RUN mode, no LIMIT)."
 echo "Find name with: kubectl get pods"
 echo "Tail logs with: kubectl logs -f <pod_name>"
 echo ""
