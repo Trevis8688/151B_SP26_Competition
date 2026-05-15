@@ -84,19 +84,23 @@ The rescue is upside-only by design (failed extractions leave the original respo
 
 ## Results
 
-_(to be filled in after Kaggle run)_
-
 | Metric | exp_013 (baseline) | exp_014 | Δ |
 |---|---:|---:|---:|
-| Local overall | 59.15% | | |
-| Local MCQ | 71.20% | | |
-| Local free-form | 53.13% | | |
-| Kaggle | 0.607 | | |
-| Public rescue rate | 106/190 (55.8%) | | |
-| Free-form rescue hit rate | ~5% | | |
+| Local overall | 59.15% | **59.50%** | +0.35pp |
+| Local MCQ | 71.20% | **72.53%** | +1.33pp |
+| Local free-form | 53.13% | 53.00% | −0.13pp |
+| Kaggle | 0.607 | **0.611** | +0.004 |
+| Public rescue rate | ~106/190 (56%) | ~112/190 (59%) | +3pp |
+| Free-form rescue hit rate | ~5% | ~0% net | — |
+
+Compare (exp_013 → exp_014): **8 gains, 4 regressions** — 5 MCQ gains, 0 free-form gains, 1 free-form regression. The GRPO rescuer recovered zero additional free-form questions the base model didn't already get.
+
+**Missing_boxed diagnosis (all 78 are truncation):** The GRPO model generates 2–4× longer reasoning chains than the base Thinking-2507. At max_tokens=4096, median missing_boxed response was 19k chars (~p90=24k), still mid-calculation at cutoff. No `</think>` tags found — model spending tokens on exhaustive manual computation (e.g., enumerating 150-element data vectors) before reaching `\boxed{}`. These are the hardest problems; even the base model (exp_013) couldn't rescue them.
 
 ## Conclusion
 
-- [ ] Keep
+- [x] **Keep — new Kaggle best (0.611)**
 - [ ] Discard
 - [ ] Needs variant
+
+MCQ rescue +1.33pp local more than offset the free-form −0.13pp. GRPO model as rescuer is confirmed worse for free-form (truncation structural issue) but incidentally better for MCQ. The capability hypothesis for free-form rescue is **disproved** — rescue is saturated; the 329 wrong_math cases need a smarter stage-1 model (GRPO pass 2), not a smarter rescuer. Active baseline going forward: exp_014 (Kaggle 0.611, local 59.50%).
