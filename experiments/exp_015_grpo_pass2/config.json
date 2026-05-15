@@ -1,0 +1,43 @@
+{
+  "_comment": "exp_015 — GRPO pass 2. Three changes from exp_009: (1) start from exp_009 GRPO model not base, (2) fresh difficulty-v2 curriculum, (3) max_completion_length=4096 to fix exp_010 OOM. All other hyperparams held constant.",
+  "base_model": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
+  "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass2",
+  "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass2-ckpt",
+  "curriculum_file": "curriculum_v2.json",
+  "_curriculum_note": "Pending DSMLP run — intermediate-difficulty prompts (1-3/4 correct) re-sampled from the exp_009 GRPO model via sample_difficulty_v2.py.",
+  "training": {
+    "epochs": 1,
+    "learning_rate": 2e-5,
+    "beta": 0.01,
+    "num_generations": 4,
+    "max_prompt_length": 1024,
+    "max_completion_length": 4096,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.0,
+    "temperature_train": 1.0,
+    "save_strategy": "steps",
+    "save_steps": 10,
+    "save_total_limit": 5,
+    "use_vllm": false
+  },
+  "reward": {
+    "correctness_weight": 1.0,
+    "format_weights": {
+      "has_think_close": 0.05,
+      "has_boxed": 0.10,
+      "boxed_post_think": 0.05,
+      "single_boxed_post_think": 0.025
+    }
+  },
+  "_ref_model_note": "ref_model intentionally unset — TRL defaults ref=base_model=exp_009 GRPO, making this a true continuation. Do NOT override to base Thinking-2507 or it will pull the policy backward.",
+  "vllm": {
+    "_note": "Kaggle inference config after training. Use cse151b-notebook with model_id set to the merged pass2 model.",
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  }
+}
