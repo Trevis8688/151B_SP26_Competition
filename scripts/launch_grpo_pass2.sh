@@ -6,15 +6,17 @@
 # Isolated in a clean python venv so a contaminated user-site / wrong-numpy install
 # from a prior pod can't break it. See CLAUDE.md DSMLP pitfalls 2-3.
 #
-# GPU preference: A6000 (48GB, sm 8.6, bf16 + FA2). Falls back to A5000 if A6000
-# unavailable -- max_completion_length=4096 should clear the exp_010 OOM either way.
+# GPU preference: A100 (40GB, sm 8.0, bf16 + FA2). Falls back to A5000 if A100
+# queued -- max_completion_length=4096 should clear the exp_010 OOM either way.
+# NOTE: this cluster does NOT accept "a6000" as a -v value (see commits
+# f193c67/cbd429a for the same pitfall on difficulty_v2). Valid values: a100, a5000, t4.
 #
 # Resume: HFPushAdapterCallback uploads the full trainer state to
 # adapter_checkpoints_repo every save_steps. If the 12h container is killed
 # mid-training, the next pod's _try_resume_from_hf() picks up where it left off.
 #
 # Usage:
-#   bash scripts/launch_grpo_pass2.sh           # A6000 (default)
+#   bash scripts/launch_grpo_pass2.sh           # A100 (default)
 #   GPU=a5000 bash scripts/launch_grpo_pass2.sh # A5000 fallback
 #
 # After launch:
@@ -24,7 +26,7 @@
 
 set -e
 
-GPU="${GPU:-a6000}"
+GPU="${GPU:-a100}"
 EXP="exp_015_grpo_pass2"
 
 echo "Launching GRPO pass 2 on $GPU ..."
@@ -80,4 +82,4 @@ echo "Tail logs with:  kubectl logs -f <pod_name>"
 echo ""
 echo "Cold start ~10-15 min (torch + bnb + trl wheels + model download)."
 echo "Expect ~10 min/step at max_completion=4096; ~70 steps total per epoch."
-echo "If A6000 is queued (Pending > 5 min), retry with: GPU=a5000 bash scripts/launch_grpo_pass2.sh"
+echo "If A100 is queued (Pending > 5 min), retry with: GPU=a5000 bash scripts/launch_grpo_pass2.sh"
