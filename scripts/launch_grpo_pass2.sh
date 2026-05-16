@@ -49,6 +49,12 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     # fetch + reset is robust to detached-HEAD / no-tracking-branch PVCs.
     cd \"\$HOME/151B_SP26_Competition\" && git fetch origin main && git reset --hard FETCH_HEAD
 
+    # Home PVC has a 5GB quota -- point pip's cache at ephemeral /tmp so we don't
+    # silently fill the PVC across pods. (Pod /tmp is wiped on pod death, so this
+    # costs us a re-download next pod but never bricks the quota.)
+    export PIP_CACHE_DIR=/tmp/pip-cache
+    mkdir -p \"\$PIP_CACHE_DIR\"
+
     # Clean venv, isolated from the container conda env.
     # Self-healing: rebuild if torch version drifts.
     VENV=\"\$HOME/.venv-grpo-pass2\"
