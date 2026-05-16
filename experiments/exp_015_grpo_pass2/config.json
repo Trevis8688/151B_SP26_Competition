@@ -1,5 +1,5 @@
 {
-  "_comment": "exp_015 — GRPO pass 2. Three changes from exp_009: (1) start from exp_009 GRPO model not base, (2) fresh difficulty-v2 curriculum, (3) max_completion_length=4096 to fix exp_010 OOM. All other hyperparams held constant.",
+  "_comment": "exp_015 — GRPO pass 2. Four changes from exp_009: (1) start from exp_009 GRPO model not base, (2) fresh difficulty-v2 curriculum filtered to max_correct=1 + allow_clipped + FF:MCQ>=2 (the strict 1-3 filter produced reward_std=0 on the trained policy), (3) max_completion_length=4096 to fix exp_010 OOM, (4) added a continuous length_bonus to format_reward (max 0.05) so reward_std is guaranteed > 0 even when correctness+discrete-format collapse to identical buckets across the 4 generations.",
   "base_model": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
   "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass2",
   "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass2-ckpt",
@@ -30,6 +30,11 @@
       "has_boxed": 0.10,
       "boxed_post_think": 0.05,
       "single_boxed_post_think": 0.025
+    },
+    "length_bonus": {
+      "max": 0.05,
+      "cap_chars": 16384,
+      "note": "Continuous descent from 0.05 at len=0 to 0.0 at cap. Guarantees nonzero reward_std as long as completions in a group differ in length; secondary objective is conciseness."
     }
   },
   "_ref_model_note": "ref_model intentionally unset — TRL defaults ref=base_model=exp_009 GRPO, making this a true continuation. Do NOT override to base Thinking-2507 or it will pull the policy backward.",

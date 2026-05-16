@@ -230,6 +230,24 @@ def correctness_reward(prompts, completions, answer_json=None, options_json=None
         rewards.append(1.0 if ok else 0.0)
     return rewards
 
+# Length bonus: a small continuous reward inversely proportional to completion
+# length. Pass 1 GRPO collapsed format + correctness to discrete values, so even
+# heterogeneous completions land in identical reward buckets and reward_std=0
+# (no gradient signal). The length bonus is *always* continuous as long as
+# generations differ in length (which they always do under temperature=1.0), so
+# the per-group standardized advantage is always nonzero -- the trainer always
+# has something to learn from. Magnitude caps at 0.05, well below correctness (1.0).
+# Secondary benefit: this objective is also useful per se -- shorter chains
+# reduce truncation risk on Kaggle (max_tokens=8192).
+_LENGTH_BONUS_MAX = 0.05
+_LENGTH_BONUS_CAP_CHARS = 16384  # ~4096 tokens at ~4 chars/token
+
+def length_bonus(text: str) -> float:
+    n = len(text)
+    if n >= _LENGTH_BONUS_CAP_CHARS:
+        return 0.0
+    return _LENGTH_BONUS_MAX * (1.0 - n / _LENGTH_BONUS_CAP_CHARS)
+
 def format_reward(prompts, completions, **kwargs):
     rewards = []
     for comp in completions:
@@ -247,12 +265,24 @@ def format_reward(prompts, completions, **kwargs):
             r += 0.05
         if len(post_boxed) == 1:
             r += 0.025
+        r += length_bonus(text)
         rewards.append(r)
     return rewards
 
-_t = "<think>let me reason \\boxed{42}</think>\nFinal: \\boxed{42}"
-assert format_reward([], [_t])[0] == 0.225
-assert format_reward([], ["<think>...</think>\n\\boxed{1} \\boxed{2}"])[0] == 0.20
+# Self-tests:
+#   - Both well-formed; the long one gets full discrete (0.225) + tiny bonus.
+#   - The short one gets full discrete + larger bonus -> strictly higher reward.
+_t_short = "<think>let me reason \\boxed{42}</think>\nFinal: \\boxed{42}"
+_t_long  = "<think>" + ("x" * 5000) + "</think>\nFinal: \\boxed{42}"
+_r_short = format_reward([], [_t_short])[0]
+_r_long  = format_reward([], [_t_long ])[0]
+assert _r_short > _r_long, (_r_short, _r_long)
+assert 0.225 < _r_short <= 0.275, _r_short
+assert 0.225 < _r_long  <  _r_short, _r_long
+# Original discrete-only sanity: two boxes after </think> still drops the
+# 0.025 single-box bonus; with length bonus we land at <= 0.25.
+_r_two_box = format_reward([], ["<think>...</think>\n\\boxed{1} \\boxed{2}"])[0]
+assert 0.20 < _r_two_box <= 0.25, _r_two_box
 print("Reward self-test OK.\n")
 
 # ============================================================
