@@ -6,18 +6,19 @@
 # Isolated in a clean python venv so a contaminated user-site / wrong-numpy install
 # from a prior pod can't break it. See CLAUDE.md DSMLP pitfalls 2-3.
 #
-# GPU preference: A100 (40GB, sm 8.0, bf16 + FA2). Falls back to A5000 if A100
-# queued -- max_completion_length=4096 should clear the exp_010 OOM either way.
-# NOTE: this cluster does NOT accept "a6000" as a -v value (see commits
-# f193c67/cbd429a for the same pitfall on difficulty_v2). Valid values: a100, a5000, t4.
+# GPU: A5000 (24GB, sm 8.6, bf16 + FA2). max_completion_length=4096 clears
+# the exp_010 OOM on this card.
+# NOTE: this user does NOT have access to A100 (gputype=a100 nodes carry the
+# `gpu-class: large` taint which our pods can't tolerate -- 2026-05-15 ticket
+# observed FailedScheduling for 10+ min). A6000 is rejected by launch.sh
+# outright. A5000 (gpu-class: medium) is the only path for this account.
 #
 # Resume: HFPushAdapterCallback uploads the full trainer state to
 # adapter_checkpoints_repo every save_steps. If the 12h container is killed
 # mid-training, the next pod's _try_resume_from_hf() picks up where it left off.
 #
 # Usage:
-#   bash scripts/launch_grpo_pass2.sh           # A100 (default)
-#   GPU=a5000 bash scripts/launch_grpo_pass2.sh # A5000 fallback
+#   bash scripts/launch_grpo_pass2.sh           # A5000 (only working option)
 #
 # After launch:
 #   kubectl get pods
@@ -26,11 +27,11 @@
 
 set -e
 
-GPU="${GPU:-a100}"
+GPU="${GPU:-a5000}"
 EXP="exp_015_grpo_pass2"
 
 echo "Launching GRPO pass 2 on $GPU ..."
-echo "(set GPU=a5000 to fall back if a6000 is unavailable)"
+echo "(only a5000 is accessible on this account; a100 and a6000 are gated)"
 
 K8S_TIMEOUT_SECONDS=43200 launch.sh \
   -g 1 -v "$GPU" -m 48 -c 8 -B \
@@ -82,4 +83,3 @@ echo "Tail logs with:  kubectl logs -f <pod_name>"
 echo ""
 echo "Cold start ~10-15 min (torch + bnb + trl wheels + model download)."
 echo "Expect ~10 min/step at max_completion=4096; ~70 steps total per epoch."
-echo "If A100 is queued (Pending > 5 min), retry with: GPU=a5000 bash scripts/launch_grpo_pass2.sh"
