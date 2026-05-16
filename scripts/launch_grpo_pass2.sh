@@ -49,23 +49,22 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     # fetch + reset is robust to detached-HEAD / no-tracking-branch PVCs.
     cd \"\$HOME/151B_SP26_Competition\" && git fetch origin main && git reset --hard FETCH_HEAD
 
-    # Home PVC has a 5GB quota -- point pip's cache at ephemeral /tmp so we don't
-    # silently fill the PVC across pods. (Pod /tmp is wiped on pod death, so this
-    # costs us a re-download next pod but never bricks the quota.)
+    # Home PVC has a 5GB quota. Push ALL heavy caches off the PVC into /tmp
+    # (pod-ephemeral) so they can never wedge the install. Re-download cost on
+    # next pod is ~5 min, negligible vs the 12h training budget.
     export PIP_CACHE_DIR=/tmp/pip-cache
-    mkdir -p \"\$PIP_CACHE_DIR\"
+    export HF_HOME=/tmp/hf-cache
+    export TRANSFORMERS_CACHE=/tmp/hf-cache
+    mkdir -p \"\$PIP_CACHE_DIR\" \"\$HF_HOME\"
 
     # Clean venv, isolated from the container conda env.
-    # Self-healing: rebuild if torch version drifts.
-    VENV=\"\$HOME/.venv-grpo-pass2\"
-    if [ -d \"\$VENV\" ] && ! \"\$VENV/bin/pip\" freeze 2>/dev/null | grep -q '^torch==2.5.1\$'; then
-      echo '--- venv has wrong/missing torch, rebuilding ---'
-      rm -rf \"\$VENV\"
-    fi
-    if [ ! -d \"\$VENV\" ]; then
-      echo \"--- creating venv at \$VENV ---\"
-      python -m venv \"\$VENV\"
-    fi
+    # Lives in /tmp (pod-ephemeral) because the home PVC has a 5GB quota that
+    # this venv (~4GB) cannot fit alongside HF cache + repo. Rebuilding it
+    # every pod costs ~5 min — negligible vs the 12h training budget.
+    VENV=\"/tmp/.venv-grpo-pass2\"
+    echo \"--- creating fresh venv at \$VENV ---\"
+    rm -rf \"\$VENV\"
+    python -m venv \"\$VENV\"
     source \"\$VENV/bin/activate\"
 
     pip install -q --upgrade pip
