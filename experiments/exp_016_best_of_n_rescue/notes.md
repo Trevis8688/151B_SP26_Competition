@@ -52,19 +52,31 @@ For each candidate, take the 3 extracted `\boxed{}` answers and **cluster by `Ju
 
 | Metric | Baseline (exp_014) | exp_016 | Δ |
 |--------|-------------------:|--------:|---:|
-| Local (public.jsonl) | 59.50% | 60.00% | **+0.50pp** |
+| Local (public.jsonl) | 59.50% | 59.50% | 0 (unchanged) |
 | Kaggle (private) | 0.611 | 0.600 | **−1.10pp** (regression) |
+
+**Important:** local is unchanged because the run was done with `target=private` — best-of-N was never applied to public, so `public_responses.jsonl` is just exp_014's responses passed through. We submitted to Kaggle without a public-set sanity check.
 
 **Submitted:** 2026-05-18
 
+### Best-of-N internals (from best_of_n_stats.json)
+
+- 943 private candidates total (mode = `full`)
+- 613 (65%) had cluster_sizes [1,1,1] — three distinct answers, **fell back to exp_014** (safety net)
+- 330 (35%) had a ≥2 majority and **overwrote exp_014's answer**
+  - Of those 330, almost all are `[3]` clusters (all 3 samples agreed)
+  - Net Kaggle Δ = −10 correct over 943 → win rate among the 330 confident overwrites is below 50%
+
 ## Conclusion
 
-**Discard.** Best-of-N regressed on private despite a modest public-set gain. The local→Kaggle Δ shape (+0.5pp → −1.1pp = 1.6pp gap) is consistent with two compounding issues:
+**Discard.** Two precise findings:
 
-1. **Public-set flips were partly noise.** Public has 1126 questions; a +0.50pp lift = ~6 net flips. Within easy sampling-variance range.
-2. **Majority vote re-confirms confident wrong answers.** When the model is wrong, its 3 samples tend to all be the *same* wrong answer (mode collapse around the argmax basin even at T=1.0). Vote rule of ≥2 → adopt the wrong answer, overwriting an exp_014 response that may have been right.
+1. **The model collapses to one mode under best-of-N.** 65% of cases produce 3 distinct answers (full incoherence), 35% produce 3 *identical* answers (mode-locked confidence). There's almost no middle ground — the policy doesn't sample a productive distribution around correct-but-uncertain answers.
+2. **The confident-overwrite slice is anti-correlated with truth at the margin.** The 330 confident overwrites scored worse than the exp_014 answers they replaced (the net −10 over 943 implies ~160 wins vs ~170 losses among the 330 changes — slightly *worse* than a coin flip). The model's "confidence" doesn't track accuracy on cases where exp_014 already got the answer.
 
-The fallback safety net was supposed to make regression impossible. It didn't, because the policy is too confidently wrong on the cases where exp_014 happened to be right. Re-sampling stage 1 with the same model + same prompt produces near-identical generations, and even slight diversity got voted into uniformity.
+The fallback safety net protected the 65% incoherent cases. The 35% confident-overwrite cases bypassed the safety net and produced the regression.
+
+**Lesson:** for Qwen3-4B-Thinking after GRPO, sampling-time interventions on the same policy are dead — diversity collapses to noise or mode-lock with no useful middle. The remaining leverage is in the *policy* itself (training), not the sampling.
 
 ## Next lever
 - [x] Discard
