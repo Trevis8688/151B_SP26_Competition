@@ -48,20 +48,24 @@ For each candidate, take the 3 extracted `\boxed{}` answers and **cluster by `Ju
 | 0.000 to +0.004 | Flat (within noise) | Discard; pivot to stats few-shots (exp_017) |
 | < 0.000 | Regression (should be impossible given safety net) | Bug — investigate cluster-vote logic |
 
-## Dev results
-_Fill in after running analyze.py on results.jsonl (split=dev)._
+## Results
 
-| Metric | Baseline | This | Δ |
-|--------|---------:|-----:|---:|
-| Overall | 59.50% | | |
-| MCQ | 72.53% | | |
-| Free-form | 53.00% | | |
-| Kaggle | 0.611 | | |
+| Metric | Baseline (exp_014) | exp_016 | Δ |
+|--------|-------------------:|--------:|---:|
+| Local (public.jsonl) | 59.50% | 60.00% | **+0.50pp** |
+| Kaggle (private) | 0.611 | 0.600 | **−1.10pp** (regression) |
 
-## Topic movers
-_Top 3 topics that improved / regressed._
+**Submitted:** 2026-05-18
 
 ## Conclusion
-- [ ] Keep (merge into `main` prompt set)
-- [ ] Discard
-- [ ] Needs variant — next experiment idea:
+
+**Discard.** Best-of-N regressed on private despite a modest public-set gain. The local→Kaggle Δ shape (+0.5pp → −1.1pp = 1.6pp gap) is consistent with two compounding issues:
+
+1. **Public-set flips were partly noise.** Public has 1126 questions; a +0.50pp lift = ~6 net flips. Within easy sampling-variance range.
+2. **Majority vote re-confirms confident wrong answers.** When the model is wrong, its 3 samples tend to all be the *same* wrong answer (mode collapse around the argmax basin even at T=1.0). Vote rule of ≥2 → adopt the wrong answer, overwriting an exp_014 response that may have been right.
+
+The fallback safety net was supposed to make regression impossible. It didn't, because the policy is too confidently wrong on the cases where exp_014 happened to be right. Re-sampling stage 1 with the same model + same prompt produces near-identical generations, and even slight diversity got voted into uniformity.
+
+## Next lever
+- [x] Discard
+- [ ] **Pivot to merged exp_015 pass-2 model** (`TrevorDuong/qwen3-4b-thinking-grpo-pass2` once merge_and_push.ipynb runs). Different *policy*, not different *sampling*. exp_017 will swap it in as the stage-1 model and re-test the exp_014 stack.
