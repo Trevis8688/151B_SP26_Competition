@@ -1,0 +1,48 @@
+{
+  "_comment": "exp_019 — GRPO pass 3. Same recipe as exp_015 pass 2, two changes only: (1) start from the merged pass-2 model TrevorDuong/qwen3-4b-thinking-grpo-pass2, (2) use the fresh curriculum_pass3.json built from difficulty_samples_pass2.jsonl with the same exp_015 filter (num_correct==1, allow_clipped, FF:MCQ>=2). Reward shape + length_bonus + max_completion_length=4096 unchanged from exp_015 — that recipe produced +0.89pp at stage-1 (exp_017) and +0.017 Kaggle (exp_018), do not change.",
+  "base_model": "TrevorDuong/qwen3-4b-thinking-grpo-pass2",
+  "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass3",
+  "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass3-ckpt",
+  "curriculum_file": "curriculum_pass3.json",
+  "_curriculum_note": "Built from data/difficulty_samples_pass2.jsonl (DSMLP resample of the merged pass-2 model on full public.jsonl). Strict filter (1-3 correct, no clip) yielded 92 prompts but 43% of pass-2 samples were clipped at 6144 tokens; loose filter (correct==1, allow_clipped) yielded 122 (74 MCQ / 48 FF), capped to 24 MCQ to maintain FF:MCQ>=2 ratio. Final size: 72 prompts (24 MCQ / 48 FF).",
+  "training": {
+    "epochs": 1,
+    "learning_rate": 2e-5,
+    "beta": 0.01,
+    "num_generations": 4,
+    "max_prompt_length": 1024,
+    "max_completion_length": 4096,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.0,
+    "temperature_train": 1.0,
+    "save_strategy": "steps",
+    "save_steps": 10,
+    "save_total_limit": 5,
+    "use_vllm": false
+  },
+  "reward": {
+    "correctness_weight": 1.0,
+    "format_weights": {
+      "has_think_close": 0.05,
+      "has_boxed": 0.10,
+      "boxed_post_think": 0.05,
+      "single_boxed_post_think": 0.025
+    },
+    "length_bonus": {
+      "max": 0.05,
+      "cap_chars": 16384,
+      "note": "Same as exp_015. Continuous descent from 0.05 at len=0 to 0.0 at cap; guarantees nonzero reward_std even when discrete reward terms collapse across the 4 generations in a group."
+    }
+  },
+  "_ref_model_note": "ref_model intentionally unset — TRL defaults ref=base_model=pass-2 GRPO. Do NOT override to strict70 or base Thinking-2507 (would pull policy backward).",
+  "vllm": {
+    "_note": "Kaggle inference config after training. Use cse151b-notebook with model_id=output_repo (after running merge_and_push.ipynb to merge the adapter).",
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  }
+}
