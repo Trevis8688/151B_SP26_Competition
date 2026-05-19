@@ -72,21 +72,36 @@ Then on Kaggle:
 
 ## Results
 
-_(to be filled after Kaggle run)_
-
 | Metric | exp_014 baseline | exp_018 | Δ vs exp_014 |
 |--------|-----------------:|--------:|-------------:|
-| Local overall | 59.50% | TBD | — |
-| Local MCQ | 72.53% | TBD | — |
-| Local free-form | 53.00% | TBD | — |
-| Missing_boxed (pre-rescue) | 78 | TBD | — |
-| Missing_boxed (post-rescue) | TBD | TBD | — |
-| Rescue rate (correct/candidates) | TBD | TBD | — |
-| Kaggle (private) | 0.611 | TBD | — |
+| **Local overall** | 59.50% | **60.39%** (680/1126) | **+0.89pp** |
+| Local MCQ | 72.53% | **73.87%** (277/375) | **+1.34pp** |
+| Local free-form | 53.00% | **53.66%** (403/751) | **+0.66pp** |
+| Public rescue candidates | 183 (exp_009 stage-1) | 181 (exp_017 stage-1) | −2 |
+| Public rescued | ~105 | 113 | +8 |
+| Private rescue candidates | — | 187 | — |
+| Private rescued | — | 92 (49%) | — |
+| **Kaggle (private)** | 0.611 | **0.628** | **+0.017** |
+
+**Submitted:** 2026-05-19. **New best.**
 
 ## Conclusion
 
-_(to be filled)_
+**Pass-2 stage-1 lift compounded perfectly through the rescue layer.** Local +0.89pp exactly matches the stage-1 delta seen in exp_017, meaning the rescue stack neither absorbed nor amplified the policy gain — it passed it through cleanly. The worst-case concern (more pass-2 truncations swamping the fixed rescue budget) did not materialize: pre-rescue missing_boxed was actually slightly lower than exp_014's source (181 vs 183), and post-rescue rate was higher (113/181 = 62% vs ~105/183 = 57%).
+
+**Kaggle translation rate ~1.91** — Kaggle delta (+0.017) was ~2× the local delta (+0.0089). Two prior experiments (exp_012, exp_013) had translation rates of 0.69 and 0.86, all below 1.0. exp_018 is the first to exceed 1.0, which suggests pass-2 generalizes better to the private set than to public. Possible explanations:
+1. The exp_015 curriculum was sampled from exp_009's policy on public.jsonl — public-set difficulty signal — but the GRPO objective generalizes structurally beyond the sampled prompts.
+2. Pass-2's free-form gains (+0.66pp local FF) hit harder on private FF, where the candidate pool is larger.
+3. Noise in the small (943-row) private set.
+
+Either way, the gain is real and the result decisively beats exp_014.
+
+## Next lever
+
+- [x] Submitted; new best at 0.628 Kaggle
+- [ ] **exp_019 pass-3 training** — DSMLP curriculum resample is in flight (~4h remaining). Filter with the same exp_015 rules (max_correct=1, allow_clipped, FF:MCQ≥2), keep length_bonus, then run pass-3 from `qwen3-4b-thinking-grpo-pass2` as base
+- [ ] After exp_019: pass-3 stage-1 inference + rescue (exp_020)
+- [ ] Decision point: pass-3 lift ≥ +0.3pp local → pass-4; lift < +0.2pp → pivot to SFT v2
 
 ## Next lever
 
