@@ -1,0 +1,22 @@
+{
+  "_comment": "exp_018 — pass-2 stage-1 + exp_014 rescue stack. SINGLE-variable swap from exp_014: source_experiment exp_009_grpo → exp_017_pass2_stage1. Rescue model_id, rescue prompts, all token budgets, vLLM sizing, and stage-1 max_tokens are IDENTICAL to exp_014. Tests whether exp_017's +0.89pp stage-1 lift compounds with the exp_014 rescue stack. Target: ≥ exp_014 local 59.50% → submit.",
+  "source_experiment": "exp_017_pass2_stage1",
+  "stage1_dataset_name": "exp-017-pass2-stage1-responses",
+  "rescue": {
+    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
+    "_model_id_note": "Kept as the exp_009 GRPO model (NOT the new pass-2 model), to isolate the policy change to stage-1 only. The lesson from exp_014 was that the GRPO model rescued MCQ +1.33pp but did nothing for free-form. Swapping the rescuer to pass-2 would mix two variables; do it as exp_019 if exp_018 wins.",
+    "max_tokens": 4096,
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_input_tokens_from_stage1": 3000
+  },
+  "vllm": {
+    "max_model_len": 8192,
+    "max_num_seqs": 24,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  },
+  "notes": "Identical to exp_014 except source_experiment + stage1_dataset_name. Same rescue prompts, same rescuer model, same token budget, same vLLM sizing. This is the cheapest test of whether pass-2's stage-1 lift compounds with the existing rescue stack."
+}
