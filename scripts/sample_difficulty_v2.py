@@ -38,7 +38,11 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 # ---- config ----
-MODEL_ID       = "TrevorDuong/qwen3-4b-thinking-grpo-strict70"
+# Both overridable via env so the same script can resample later policies
+# (e.g. the exp_015 pass-2 model) without duplicating the file. Defaults
+# preserve the original exp_015-prep behaviour exactly.
+MODEL_ID       = os.environ.get("MODEL_ID", "TrevorDuong/qwen3-4b-thinking-grpo-strict70")
+OUT_SUFFIX     = os.environ.get("OUT_SUFFIX", "v2")  # difficulty_samples_<suffix>.jsonl
 NUM_SAMPLES    = 4
 TEMPERATURE    = 1.0
 TOP_P          = 0.95
@@ -59,8 +63,8 @@ TENSOR_PARALLEL = 1          # DSMLP launches with -g 1. NOT 2.
 LIMIT = int(os.environ.get("LIMIT", "0")) or None
 
 PUBLIC_PATH    = REPO / "data" / "public.jsonl"
-OUT_SAMPLES    = REPO / "data" / "difficulty_samples_v2.jsonl"
-OUT_CURRICULUM = REPO / "data" / "sweet_spot_v2_ids.json"
+OUT_SAMPLES    = REPO / "data" / f"difficulty_samples_{OUT_SUFFIX}.jsonl"
+OUT_CURRICULUM = REPO / "data" / f"sweet_spot_{OUT_SUFFIX}_ids.json"
 
 # Reuse exp_009's training-time prompts. The GRPO model expects these exact prompts;
 # sampling with different prompts puts it out-of-distribution and gives misleading
