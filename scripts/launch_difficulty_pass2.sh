@@ -26,6 +26,14 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     rm -rf "$HOME/.local/lib/python3.11/site-packages"
     rm -rf "$HOME/.local/bin"
 
+    # Keep model weights + pip wheels out of the 5GB PVC. /tmp is ephemeral
+    # but the model only needs to be cached for this pod (~2-4h job).
+    export HF_HOME=/tmp/hf-cache
+    export TRANSFORMERS_CACHE=/tmp/hf-cache
+    export HF_HUB_CACHE=/tmp/hf-cache
+    export PIP_CACHE_DIR=/tmp/pip-cache
+    mkdir -p "$HF_HOME" "$PIP_CACHE_DIR"
+
     cd "$HOME/151B_SP26_Competition" && git fetch origin main && git reset --hard FETCH_HEAD
 
     VENV="$HOME/.venv-difficulty-v2"
