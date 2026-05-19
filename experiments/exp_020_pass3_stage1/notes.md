@@ -5,14 +5,28 @@
 - exp_017_pass2_stage1 (local 56.84%) — direct stage-1 comparison
 - exp_018_pass2_rescue (Kaggle 0.628, local 60.39%) — current best stack
 
-## Hypothesis
+## Hypothesis (UPDATED 2026-05-19 after Path B pivot)
 
-The pass-3 GRPO policy (trained from pass-2 on a fresh 72-prompt curriculum sampled from pass-2 itself) should produce a measurable stage-1 lift over exp_017's pass-2 stage-1 (56.84%).
+The pass-3 GRPO policy (trained from pass-2 on a **STRICT 88-prompt curriculum** — see exp_019 notes for Path B recipe change) should produce a measurable stage-1 lift over exp_017's pass-2 stage-1 (56.84%).
 
-Realistic expectations conditional on exp_019 training health:
-- **If pass-3 ran 14 steps and recipe is consistent:** expect roughly 1/3 of exp_017's per-step gain → **+0.3pp local at stage-1** (vs exp_017's +0.89pp from 48 steps)
-- **If pass-3 hit reward_std=0 anywhere:** training degraded → no lift or regression
-- **Stretch:** pass-3 generalizes more efficiently → +0.5-0.8pp (matching pass-2)
+### Upstream change in pass-3 recipe (Path B)
+
+The initial pass-3 run with loose curriculum (72 prompts, allow_clipped) was killed after 6 iterations once we observed that 50% of steps had variance collapse (3 of 6 had reward_std < 0.02). The restart uses:
+- **Strict curriculum:** 88 prompts (29 MCQ / 59 FF) at 1-3 correct AND no_clip — eliminates the all-clipped disaster mode AND the all-correct trivial mode
+- **max_completion_length:** 4096 → 5120 — adds headroom for prompts pass-2 solved in 4500-5000 tokens
+- Everything else byte-identical to exp_015 pass-2 recipe (length_bonus, lr, beta, lora config)
+
+### Realistic expectations conditional on exp_019 training health
+
+| Outcome | P | E[stage-1 lift over exp_017] |
+|---|---:|---:|
+| Strict curriculum captures the available gradient: 12+ effective grad updates | 0.50 | +0.30 to +0.50pp |
+| Mixed: ~8 effective grad updates (partial collapse on the 3-correct band) | 0.30 | +0.10 to +0.25pp |
+| Poor: residual variance collapse on most steps; KL accumulates without learning | 0.15 | -0.10 to +0.05pp |
+| Disaster: OOM at 5120 mid-training (~17% memory margin from exp_010's OOM point) | 0.05 | n/a — fall back to ckpt-10 |
+
+**Headline E[Δ]: +0.28pp local at stage-1** (range: -0.10 to +0.50pp)
+**Stretch:** pass-3 generalizes more efficiently because strict band includes 2-3 correct prompts → +0.5 to +0.8pp (matching pass-2's +0.89pp lift)
 
 ## Change from baseline (exp_017)
 
@@ -26,11 +40,11 @@ Everything else identical to exp_017:
 ## Pre-requisite
 
 The pass-3 model must be merged + pushed to HF Hub before this can run:
-- Merge `TrevorDuong/qwen3-4b-thinking-grpo-pass3-ckpt/checkpoint-N` (where N is the final step from exp_019 training; will be 14 if config holds) into the pass-2 base via `experiments/exp_015_grpo_pass2/merge_and_push.ipynb` — change the constants:
+- Merge `TrevorDuong/qwen3-4b-thinking-grpo-pass3-ckpt/checkpoint-N` (where N is the final step from the Path B exp_019 restart; expected ~17-18 grad updates from 88-prompt curriculum) into the pass-2 base via `experiments/exp_015_grpo_pass2/merge_and_push.ipynb` — change the constants:
   - `BASE = "TrevorDuong/qwen3-4b-thinking-grpo-pass2"`
   - `ADAPTR = "TrevorDuong/qwen3-4b-thinking-grpo-pass3-ckpt"`
   - `TARGET = "TrevorDuong/qwen3-4b-thinking-grpo-pass3"`
-  - `SUBFOLDER = "checkpoint-N"` (replace N with the actual final step)
+  - `SUBFOLDER = "checkpoint-N"` (replace N with the actual final step — likely 17 or 18, not 14)
 - After merge, flip the pass-3 HF repo to **public** so the Kaggle notebook can pull without HF auth (same workflow as pass-2 — saves notebook editing).
 
 ## Plan
@@ -49,9 +63,10 @@ The pass-3 model must be merged + pushed to HF Hub before this can run:
 
 | Local (vs exp_017 stage-1 56.84%) | Interpretation | Action |
 |---|---|---|
-| ≥ +0.5pp (≥ 57.34%) | Strong continuation of pass-2 trend | Layer rescue (exp_021), submit if ≥ 61.0% local |
-| 0.0 to +0.5pp | Modest lift; expected given step count | Still layer rescue (exp_021), evaluate vs current 0.628 Kaggle best |
-| < 0.0pp | Pass-3 regressed | Discard; try ckpt-10 (earlier checkpoint); if still regression, GRPO well is dry → SFT v2 |
+| ≥ +0.5pp (≥ 57.34%) | Path B strict curriculum confirmed | Layer rescue (exp_021), submit if ≥ 61.0% local; pass-4 likely worth pursuing |
+| +0.2 to +0.5pp | Modest lift consistent with E[Δ] | Layer rescue (exp_021), evaluate vs current 0.628 Kaggle best; pass-4 marginal |
+| 0.0 to +0.2pp | Below E[Δ] — strict curriculum didn't fix enough | Skip rescue submit; pivot to SFT v2 |
+| < 0.0pp | Pass-3 regressed despite Path B | Discard; try ckpt-10 (earlier checkpoint); GRPO well confirmed dry → SFT v2 |
 
 ## Results
 

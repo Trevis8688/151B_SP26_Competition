@@ -17,23 +17,28 @@ Realistic counterarguments:
 
 ## Change from baseline (exp_015)
 
-**Two variables changed:** base model + curriculum file. Everything else byte-identical to exp_015:
-- `base_model`: `qwen3-4b-thinking-grpo-strict70` → **`qwen3-4b-thinking-grpo-pass2`**
-- `curriculum_file`: `curriculum_v2.json` (58 prompts) → **`curriculum_pass3.json` (72 prompts: 24 MCQ / 48 FF)**
+**RESTART 2026-05-19 (Path B):** Initial launch used the loose filter (correct==1, allow_clipped, 72 prompts) and ran 6 iterations before being killed. Pattern observed:
+- 3 of 6 steps had real signal (correctness_std=0.5, reward_std>0.4)
+- 2 of 6 steps had all-correct collapse (correctness=1.0, std=0) — curriculum prompts now trivially solved by pass-3
+- 1 of 6 had all-clipped disaster at step 4 (clipped_ratio=1.0, no `\boxed{}` reached, reward_std=0.0002) — pass-2 needed >4096 tokens at T=1.0 on that prompt
+
+Restart recipe:
+- `base_model`: `qwen3-4b-thinking-grpo-strict70` → **`qwen3-4b-thinking-grpo-pass2`** (unchanged from initial launch)
+- `curriculum_file`: **STRICT** rebuild of `curriculum_pass3.json` — `--min-correct 1 --max-correct 3` (no `--allow-clipped`), FF:MCQ≥2 → **88 prompts (29 MCQ / 59 FF)**, vs loose 72 (24/48). Wider learning band + no-clip filter directly addresses both failure modes seen in the initial run.
+- `max_completion_length`: 4096 → **5120** (+25%, well below exp_010's 6144 OOM point; ~17% memory margin). Catches the prompts pass-2 solved in 4500-5000 tokens that pass-3 was clipping at 4096.
 
 Recipe held constant from exp_015 (proven good):
-- `max_completion_length=4096` — prevents exp_010 OOM in `entropy_from_logits`
 - `length_bonus` reward (max 0.05, cap 16384 chars) — prevents reward_std=0
 - `lora_r=16, lora_alpha=32, lora_dropout=0.0`
 - `learning_rate=2e-5, beta=0.01, num_generations=4`
 - `gradient_accumulation_steps=4` → effective batch 4 prompts × 4 gens = 16 per step
 - Format reward weights (has_think_close, has_boxed, boxed_post_think, single_boxed_post_think)
 - `save_steps=10` → adapter checkpoints push to HF every 10 grad updates
-- `epochs=1` → 1 pass over 72 prompts at batch 4 = ~18 grad updates total (vs exp_015's 48)
+- `epochs=1` → 1 pass over 88 prompts (≈70 after dev exclusion) at batch 4 = ~17-18 grad updates
 
-**Important:** exp_019's training will be SHORTER than exp_015 in absolute steps because the curriculum is similar size but exp_015 did `4 epochs/2 epochs * 58 = 48 steps` — recheck epoch math against exp_015 once training kicks off.
+**Wall-time estimate:** 88 prompts × ~9 min/iteration × (post-dev factor ≈0.8) ≈ 10.5h. Tighter against the 12h pod ceiling than the loose run, but save_steps=10 lands a checkpoint at iteration ~40 (~6h in) as backstop. With max_completion=5120 the per-iteration time may rise slightly (more tokens to score); budget +10-15% on top.
 
-## Curriculum details (data/curriculum_pass3.json)
+## Curriculum details (data/curriculum_pass3.json — Path B STRICT)
 
 Source: `data/difficulty_samples_pass2.jsonl` (1126 prompts × 4 samples, sampled from pass-2 GRPO model at T=1.0, max_new_tokens=6144)
 
@@ -41,13 +46,20 @@ Source: `data/difficulty_samples_pass2.jsonl` (1126 prompts × 4 samples, sample
 |---|---:|---|
 | Total sampled | 1126 | Full public.jsonl |
 | 0 correct | 710 | Beyond model capability — excluded |
-| 1 correct | 122 | Primary learning signal |
-| 2 correct | 67 | (loose filter excludes — too risky for reward variance) |
-| 3 correct | 57 | (loose filter excludes) |
+| 1 correct | 122 | Primary learning band |
+| 2 correct | 67 | **Included in strict filter** — high variance prompts |
+| 3 correct | 57 | **Included in strict filter** — near-mastery prompts |
 | 4 correct | 170 | No gradient — excluded |
-| **Strict filter** (1-3, no clip) | 92 | Discarded by 43% sample clip rate |
-| **Loose filter** (==1, allow clip) | 122 (74 MCQ / 48 FF) | exp_015 recipe |
-| **+ FF:MCQ≥2 cap** | **72 (24 MCQ / 48 FF)** | Final curriculum |
+| Prompts with ≥1 clipped sample | 765 | 68% — excluded by no_clip filter |
+| **Strict filter** (1-3 correct, no_clip) | **92 (33 MCQ / 59 FF)** | Includes wider learning band; excludes prompts pass-2 couldn't fit in 6144 tokens |
+| **+ FF:MCQ≥2 cap** | **88 (29 MCQ / 59 FF)** | **Final Path B curriculum** |
+
+### Why we switched from loose to strict (2026-05-19 mid-run)
+
+The initial loose curriculum (correct==1, allow_clipped → 72 prompts) was chosen on the theory that pass-2's 43% sample clip rate would over-filter the strict set. After observing 6 iterations of the actual run we saw:
+- The 2-of-4 and 3-of-4 buckets are *exactly* the high-variance prompts GRPO benefits from — excluding them was a mistake
+- The `allow_clipped` setting let in prompts where pass-2 needed >4096 tokens AT SAMPLING. At training's 4096 cap (now 5120), those prompts deterministically clip → zero gradient (step 4 disaster)
+- Strict's 92 prompts (88 after ratio cap) is *larger* than loose's 72 — we get MORE material with HIGHER signal density
 
 ## Plan
 
