@@ -1,0 +1,22 @@
+{
+  "_comment": "exp_021 — pass-3 stage-1 + exp_014 rescue stack. SINGLE-variable swap from exp_018 (the proven 0.628 stack): source_experiment exp_017_pass2_stage1 → exp_020_pass3_stage1. Rescue model_id, rescue prompts, all token budgets, and vLLM sizing are IDENTICAL to exp_018/exp_014. Isolates whether exp_020's +1.77pp stage-1 lift compounds with the proven rescue stack. Target: > exp_018 local 60.39% → submit (current Kaggle best 0.628).",
+  "source_experiment": "exp_020_pass3_stage1",
+  "stage1_dataset_name": "exp-020-pass3-stage1-responses",
+  "rescue": {
+    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
+    "_model_id_note": "Kept as the exp_009 GRPO model (strict70), IDENTICAL to exp_018/exp_014. Keeps exp_021 a clean single-variable swap (only stage-1 model changed, from pass-2 to pass-3). Swapping the rescuer to a newer model would mix variables; defer that to a later experiment if exp_021 wins.",
+    "max_tokens": 4096,
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_input_tokens_from_stage1": 3000
+  },
+  "vllm": {
+    "max_model_len": 8192,
+    "max_num_seqs": 24,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  },
+  "notes": "Identical to exp_018 except source_experiment + stage1_dataset_name. Same rescue prompts, same rescuer model (strict70), same token budget, same vLLM sizing. Cheapest test of whether pass-3's stage-1 lift compounds with the existing rescue stack."
+}
