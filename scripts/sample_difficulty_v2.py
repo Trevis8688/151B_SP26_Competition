@@ -43,17 +43,23 @@ sys.path.insert(0, str(REPO))
 # preserve the original exp_015-prep behaviour exactly.
 MODEL_ID       = os.environ.get("MODEL_ID", "TrevorDuong/qwen3-4b-thinking-grpo-strict70")
 OUT_SUFFIX     = os.environ.get("OUT_SUFFIX", "v2")  # difficulty_samples_<suffix>.jsonl
-NUM_SAMPLES    = 4
-TEMPERATURE    = 1.0
-TOP_P          = 0.95
-TOP_K          = 20
-MAX_NEW_TOKENS = 6144
+# Sampling params are env-overridable so the curriculum can be measured under the
+# SAME per-token distribution that GRPO training will use (otherwise the difficulty
+# band measured here doesn't predict training-time reward variance). NOTE the
+# disable convention differs by backend: vLLM (here) disables top_k with TOP_K=-1
+# and top_p with TOP_P=1.0; TRL/transformers (training) disables top_k with top_k=0.
+# So "match training top_k=0" means passing TOP_K=-1 to this script.
+NUM_SAMPLES    = int(os.environ.get("NUM_SAMPLES", "4"))
+TEMPERATURE    = float(os.environ.get("TEMPERATURE", "1.0"))
+TOP_P          = float(os.environ.get("TOP_P", "0.95"))
+TOP_K          = int(os.environ.get("TOP_K", "20"))
+MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "6144"))
 
 # vLLM does continuous batching internally, so we hand it whole chunks of prompts
 # and let the scheduler saturate the GPU. We still chunk (rather than one giant
 # generate() call) so the JSONL is flushed periodically -> resumable if the 12h
 # container times out mid-run.
-CHUNK_PROMPTS  = 24          # 24 prompts x 4 samples = 96 seqs per call (was 48→OOM on A5000 logit sort)
+CHUNK_PROMPTS  = int(os.environ.get("CHUNK_PROMPTS", "24"))  # keep CHUNK_PROMPTS*NUM_SAMPLES ~96 seqs/call (48*4 OOM'd on A5000 logit sort); for NUM_SAMPLES=8 use CHUNK_PROMPTS=12
 MAX_MODEL_LEN  = 8192        # input p99 ~851 tok + 6144 gen, 8192 leaves headroom
 GPU_MEM_UTIL   = 0.85        # reduced from 0.90; leaves headroom for logit sort on A5000 fallback
 TENSOR_PARALLEL = 1          # DSMLP launches with -g 1. NOT 2.
@@ -260,6 +266,8 @@ if __name__ == "__main__":
             "num_samples": NUM_SAMPLES,
             "max_new_tokens": MAX_NEW_TOKENS,
             "temperature": TEMPERATURE,
+            "top_p": TOP_P,
+            "top_k": TOP_K,
         }, f, indent=2)
 
     print(f"\nWrote curriculum: {OUT_CURRICULUM}")

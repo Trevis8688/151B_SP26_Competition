@@ -30,13 +30,21 @@ def load_samples(path: Path):
     return rows
 
 
-def filter_rows(rows, min_correct, max_correct, allow_clipped):
+def filter_rows(rows, min_correct, max_correct, allow_clipped, max_length=None):
     keep = []
     for r in rows:
         nc = r["num_correct"]
         if not (min_correct <= nc <= max_correct):
             continue
-        if (not allow_clipped) and r["num_clipped"] > 0:
+        # Clipping: if --max-length is set, re-derive it from the recorded per-sample
+        # token lengths at that budget (lets us sample once at a generous
+        # MAX_NEW_TOKENS and filter at the training run's actual max_completion
+        # without re-sampling). Otherwise use the clip flag recorded at sampling time.
+        if max_length is not None:
+            clipped = any(s["length"] > max_length for s in r["samples"])
+        else:
+            clipped = r["num_clipped"] > 0
+        if (not allow_clipped) and clipped:
             continue
         keep.append(r)
     return keep
@@ -61,12 +69,17 @@ def main():
     ap.add_argument("--min-correct", type=int, default=1)
     ap.add_argument("--max-correct", type=int, default=3)
     ap.add_argument("--allow-clipped", action="store_true",
-                    help="Keep prompts even if some of the 4 samples were truncated.")
+                    help="Keep prompts even if some samples were truncated.")
+    ap.add_argument("--max-length", type=int, default=None,
+                    help="Post-hoc clip threshold: treat a sample as clipped if its "
+                         "token length exceeds this. Set to the training run's "
+                         "max_completion_length so --allow-clipped is meaningful even "
+                         "when sampling used a larger MAX_NEW_TOKENS.")
     ap.add_argument("--ff-mcq-ratio", type=float, default=None,
                     help="If set, cap MCQ count so free-form:MCQ >= this ratio.")
     args = ap.parse_args()
 
-    inp  = Path(args.inp)
+    inp  = Path(args.inp).resolve()
     outp = Path(args.outp)
     if not inp.exists():
         sys.exit(f"ERR: input not found: {inp}")
@@ -80,11 +93,12 @@ def main():
     print(f"num_correct distribution: " + "  ".join(f"{k}={nc_dist.get(k,0)}" for k in range(5)))
     print(f"Prompts with >=1 clipped sample: {clip_total}/{len(rows)}")
 
-    kept = filter_rows(rows, args.min_correct, args.max_correct, args.allow_clipped)
+    kept = filter_rows(rows, args.min_correct, args.max_correct, args.allow_clipped, args.max_length)
     mcq_n = sum(r["is_mcq"] for r in kept)
     ff_n  = len(kept) - mcq_n
+    clip_desc = f"len>{args.max_length}" if args.max_length is not None else "sampling-time flag"
     print(f"After filter (correct in [{args.min_correct},{args.max_correct}], "
-          f"allow_clipped={args.allow_clipped}): {len(kept)} prompts ({mcq_n} MCQ, {ff_n} FF)")
+          f"allow_clipped={args.allow_clipped}, clip={clip_desc}): {len(kept)} prompts ({mcq_n} MCQ, {ff_n} FF)")
 
     if args.ff_mcq_ratio is not None:
         kept = cap_mcq_ratio(kept, args.ff_mcq_ratio)
@@ -103,6 +117,7 @@ def main():
             "min_correct": args.min_correct,
             "max_correct": args.max_correct,
             "allow_clipped": args.allow_clipped,
+            "max_length": args.max_length,
             "ff_mcq_ratio": args.ff_mcq_ratio,
         },
         "num_correct_distribution": {str(k): nc_dist.get(k, 0) for k in range(5)},
