@@ -1,0 +1,48 @@
+{
+  "_comment": "exp_022 — GRPO pass 4 from the pass-3 merged model. SINGLE intentional change from exp_019 (the pass-3 recipe): the curriculum. Same G=4, T=1.0, max_completion=5120, lr=2e-5, beta=0.01, length_bonus. The new curriculum (curriculum_pass4.json) is sampled from the pass-3 policy at the matched training-time per-token distribution (top_k disabled / top_p=1.0 / T=1.0, N=8), produced by scripts/launch_difficulty_pass3.sh + scripts/filter_curriculum_v2.py. Hypothesis: every prior pass sampled at top_k=20 but trained at top_k=None — that distribution mismatch was baked into every curriculum we've ever used. Closing it should raise the in-band-prompt fraction and reduce the dead-step rate without touching the optimizer recipe.",
+  "base_model": "TrevorDuong/qwen3-4b-thinking-grpo-pass3",
+  "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass4",
+  "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass4-ckpt",
+  "curriculum_file": "curriculum_pass4.json",
+  "_curriculum_note": "Build with: python scripts/filter_curriculum_v2.py --in data/difficulty_samples_pass3.jsonl --out experiments/exp_022_grpo_pass4/curriculum_pass4.json --min-correct 2 --max-correct 6 --max-length 5120 --ff-mcq-ratio 2.0. The band [2,6] at N=8 is p_correct in [0.25, 0.75] (max within-G=4 variance band). --max-length 5120 matches training's max_completion_length so 'allow_clipped=False' filters at the training budget. Sample target after filter: 60-100 prompts (similar to exp_019's 88).",
+  "training": {
+    "epochs": 1,
+    "learning_rate": 2e-5,
+    "beta": 0.01,
+    "num_generations": 4,
+    "max_prompt_length": 1024,
+    "max_completion_length": 5120,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.0,
+    "temperature_train": 1.0,
+    "save_strategy": "steps",
+    "save_steps": 10,
+    "save_total_limit": 5,
+    "use_vllm": false
+  },
+  "reward": {
+    "correctness_weight": 1.0,
+    "format_weights": {
+      "has_think_close": 0.05,
+      "has_boxed": 0.10,
+      "boxed_post_think": 0.05,
+      "single_boxed_post_think": 0.025
+    },
+    "length_bonus": {
+      "max": 0.05,
+      "cap_chars": 16384,
+      "note": "Same as exp_015/exp_019. Continuous descent from 0.05 at len=0 to 0.0 at cap; guarantees nonzero reward_std even when discrete reward terms collapse across the 4 generations in a group."
+    }
+  },
+  "_ref_model_note": "ref_model intentionally unset — TRL defaults ref=base_model=pass-3 GRPO. Do NOT override to pass-2 or earlier (would pull policy backward).",
+  "vllm": {
+    "_note": "Kaggle inference config after training. Use cse151b-notebook with model_id=output_repo (after running merge_and_push.ipynb to merge the adapter).",
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  }
+}

@@ -21,19 +21,20 @@
 # CHUNK_PROMPTS dropped 24 -> 12 to keep CHUNK_PROMPTS*NUM_SAMPLES ~= 96 seqs/call
 # (the A5000 OOM'd at higher concurrency on the logit path).
 #
-# >>> RESOLVED 2026-05-20: TRL 0.21 GRPOConfig defaults are top_k=None (disabled),
-#     top_p=1.0 (disabled). So pass-2/3 already sampled WITHOUT top_k truncation —
-#     the ~10% useful-step rate is 4-bit policy peakedness, NOT a sampler artifact.
-#     => the PRIMARY pass-4 fix is the num_generations bump (see launch_pilot_pass4.sh);
-#        this matched re-sample is SECONDARY (it makes the difficulty band accurate but
-#        does not by itself create variance). Old samples used top_k=20; sampling here
-#        with top_k disabled (TOP_K=-1) better matches training, which is still worth it.
+# >>> RESOLVED 2026-05-20: TRL 0.21 GRPOConfig defaults are top_k=None / top_p=1.0
+#     (both disabled). pass-2/3 already sampled WITHOUT top_k truncation — the ~10%
+#     useful-step rate is 4-bit policy peakedness, NOT a sampler artifact.
 #
-# >>> GATE: set TEMPERATURE below to whatever the pilot picks for pass-4 training
-#     (1.0 or 1.1). Difficulty must be measured at the training temperature, else the
-#     band won't predict training-time variance. Do NOT launch until the pilot's T is known.
-#     (The fp16-vLLM-here vs 4-bit-BnB-training quantization gap remains and can't be
-#      closed by sampling params — accept it; variance comes from G + T, not the curriculum.)
+# >>> RESOLVED 2026-05-20 (post-pilot): pass-4 = pass-3 recipe (G=4, T=1.0, max_completion=5120)
+#     + MATCHED-SAMPLER CURRICULUM. The pilot at PILOT_STEPS=6 was too noisy to pick
+#     between G=4 and G=6 (frac_reward_zero_std=0 across all configs is a sample-size
+#     artifact, not signal). The plain read was that G=6 actively *hurt* correctness
+#     variance vs G=4; T=1.1 only recovered it. So we change ONE thing for pass-4:
+#     the curriculum's per-token distribution. Every prior pass sampled at top_k=20 but
+#     trained at top_k=None — that gap is baked into every curriculum. This run fixes it.
+#     T=1.0 (matches training); TOP_K=-1 + TOP_P=1.0 (vLLM-side equivalent of training's
+#     top_k=None / top_p=1.0). The training-vs-vLLM quantization gap (4-bit BnB vs fp16)
+#     remains and cannot be closed by sampling params — accept it.
 #
 # Output (PVC, persists across pods):
 #   data/difficulty_samples_pass3.jsonl   (one row/prompt: num_correct, num_clipped, per-sample length)
@@ -42,9 +43,9 @@
 # Then build the pass-4 curriculum from these samples WITHOUT re-running sampling:
 #   python scripts/filter_curriculum_v2.py \
 #     --in  data/difficulty_samples_pass3.jsonl \
-#     --out experiments/exp_022_<slug>/curriculum_pass4.json \
-#     --min-correct 2 --max-correct 6 \      # p_correct in [0.25,0.75] at N=8
-#     --max-length <pilot max_completion> \  # post-hoc clip at the training budget
+#     --out experiments/exp_022_grpo_pass4/curriculum_pass4.json \
+#     --min-correct 2 --max-correct 6 \   # p_correct in [0.25,0.75] at N=8
+#     --max-length 5120 \                 # matches pass-4 training max_completion_length
 #     --ff-mcq-ratio 2.0
 #
 # After launch:
