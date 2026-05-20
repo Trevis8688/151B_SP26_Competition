@@ -21,14 +21,19 @@
 # CHUNK_PROMPTS dropped 24 -> 12 to keep CHUNK_PROMPTS*NUM_SAMPLES ~= 96 seqs/call
 # (the A5000 OOM'd at higher concurrency on the logit path).
 #
-# >>> GATE: run this ONLY after the top_k measurement on DSMLP:
-#       python -c "from trl import GRPOConfig; c=GRPOConfig(output_dir='/tmp/x'); print(c.top_k, c.top_p)"
-#     - top_k=20/50  -> truncation hypothesis confirmed; this matched re-sample is the
-#                       primary curriculum fix. Launch as-is.
-#     - top_k=None/0 -> training already disables top_k; low entropy is BnB peakedness.
-#                       The matched re-sample still helps (old samples used top_k=20),
-#                       but the PRIMARY fix becomes the num_generations bump (pilot).
-#                       Still fine to launch this; just prioritize the pilot.
+# >>> RESOLVED 2026-05-20: TRL 0.21 GRPOConfig defaults are top_k=None (disabled),
+#     top_p=1.0 (disabled). So pass-2/3 already sampled WITHOUT top_k truncation —
+#     the ~10% useful-step rate is 4-bit policy peakedness, NOT a sampler artifact.
+#     => the PRIMARY pass-4 fix is the num_generations bump (see launch_pilot_pass4.sh);
+#        this matched re-sample is SECONDARY (it makes the difficulty band accurate but
+#        does not by itself create variance). Old samples used top_k=20; sampling here
+#        with top_k disabled (TOP_K=-1) better matches training, which is still worth it.
+#
+# >>> GATE: set TEMPERATURE below to whatever the pilot picks for pass-4 training
+#     (1.0 or 1.1). Difficulty must be measured at the training temperature, else the
+#     band won't predict training-time variance. Do NOT launch until the pilot's T is known.
+#     (The fp16-vLLM-here vs 4-bit-BnB-training quantization gap remains and can't be
+#      closed by sampling params — accept it; variance comes from G + T, not the curriculum.)
 #
 # Output (PVC, persists across pods):
 #   data/difficulty_samples_pass3.jsonl   (one row/prompt: num_correct, num_clipped, per-sample length)
