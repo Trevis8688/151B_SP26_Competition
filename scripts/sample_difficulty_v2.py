@@ -30,9 +30,27 @@ Usage (inside the clean venv -- see launch_difficulty_v2.sh):
     LIMIT=10 HF_TOKEN=$(cat ~/.hf_token) python scripts/sample_difficulty_v2.py   # smoke test
     HF_TOKEN=$(cat ~/.hf_token) python scripts/sample_difficulty_v2.py            # full run
 """
-import json, os, sys, time
+import json, os, signal, sys, time
 from pathlib import Path
 import torch
+
+
+class _JudgeTimeout(Exception):
+    """Raised when auto_judge exceeds its per-call wall-clock budget."""
+    pass
+
+
+def _alarm_handler(signum, frame):
+    raise _JudgeTimeout()
+
+
+# Per-judgment wall-clock cap. The matched-sampler config (top_k=-1, top_p=1.0, T=1.0)
+# can produce pathological \boxed{} contents that wedge SymPy's parse_latex
+# indefinitely (top_k=20 in earlier runs avoided this by construction). 30s is well
+# above any legitimate auto_judge call (~ms-seconds) but bounded enough to limp past
+# poison prompts. On timeout the prompt is scored as wrong, which is correct: the
+# response is unparseable, the model didn't deliver an evaluable answer.
+JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "30"))
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -97,10 +115,19 @@ def normalize_gold(answer):
 def score_response(judger_inst, text, gold, options):
     gold_list = normalize_gold(gold)
     opts_per_gold = [options if options else []] * len(gold_list)
+    # SIGALRM-based timeout: see JUDGE_TIMEOUT_SECONDS above. score_response is called
+    # from the main thread of the main process (after llm.generate returns), so SIGALRM
+    # is delivered correctly. The handler raises _JudgeTimeout, which the broad except
+    # below catches just like any other judge error -> score as wrong.
+    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+    signal.alarm(JUDGE_TIMEOUT_SECONDS)
     try:
         return bool(judger_inst.auto_judge(pred=text, gold=gold_list, options=opts_per_gold))
     except Exception:
         return False
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 def build_prompt(tokenizer_inst, ex):
     is_mcq = bool(ex.get("options"))
