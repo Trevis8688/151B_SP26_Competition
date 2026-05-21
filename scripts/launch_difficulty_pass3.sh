@@ -36,6 +36,22 @@
 #     top_k=None / top_p=1.0). The training-vs-vLLM quantization gap (4-bit BnB vs fp16)
 #     remains and cannot be closed by sampling params — accept it.
 #
+# >>> FIXED 2026-05-20 (budget faithfulness): a same-model join of the OLD pass-2
+#     difficulty (sampled at 6144) against the pass-2 Kaggle responses showed the
+#     difficulty sampler clipped 43% of generations and rated 57% of Kaggle-correct
+#     prompts as 0-1/4 "hard". Root cause: we sampled at MAX_NEW_TOKENS=6144 but
+#     TRAIN at max_completion_length=5120, then the filter (--max-length 5120) EXCLUDED
+#     every prompt that ran long — i.e. it discarded the exact long-chain prompts where
+#     the model truncates during training (the high-value "learn to be concise" targets)
+#     and kept only the short/easy ones. Two corrections below:
+#       (a) MAX_NEW_TOKENS 6144 -> 5120, so num_correct is measured at the TRAINING
+#           budget and directly predicts training reward variance.
+#       (b) filter now uses --allow-clipped (NOT --max-length): a clip is now a real
+#           training-time truncation, so a 2-correct/6-truncated prompt is KEPT — it has
+#           reward variance and is precisely what GRPO + length_bonus should train on.
+#     This is for TRAINING faithfulness (bf16/5120), NOT Kaggle (fp16/8192). DSMLP is
+#     not a Kaggle proxy — see memory project_dsmlp_not_kaggle_proxy.
+#
 # Output (PVC, persists across pods):
 #   data/difficulty_samples_pass3.jsonl   (one row/prompt: num_correct, num_clipped, per-sample length)
 #   data/sweet_spot_pass3_ids.json        (default end-of-run curriculum, N=8 strict band)
@@ -45,7 +61,9 @@
 #     --in  data/difficulty_samples_pass3.jsonl \
 #     --out experiments/exp_022_grpo_pass4/curriculum_pass4.json \
 #     --min-correct 2 --max-correct 6 \   # p_correct in [0.25,0.75] at N=8
-#     --max-length 5120 \                 # matches pass-4 training max_completion_length
+#     --allow-clipped \                   # KEEP truncated prompts: sampled at the 5120
+#                                         # training budget, so a clip == a real training
+#                                         # truncation (a live-gradient target), NOT noise
 #     --ff-mcq-ratio 2.0
 #
 # After launch:
@@ -98,7 +116,7 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     TEMPERATURE=1.0 \
     TOP_K=-1 \
     TOP_P=1.0 \
-    MAX_NEW_TOKENS=6144 \
+    MAX_NEW_TOKENS=5120 \
     CHUNK_PROMPTS=12 \
     HF_TOKEN=$(cat "$HOME/.hf_token") \
       python scripts/sample_difficulty_v2.py

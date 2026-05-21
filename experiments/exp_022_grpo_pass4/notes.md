@@ -6,7 +6,11 @@
 - exp_020_pass3_stage1 (local 58.61% — pass-3 stage-1 reference)
 - exp_021_pass3_rescue (local **62.17%**, Kaggle TBD — current best stack)
 
-## Hypothesis (Path: matched-sampler curriculum, no G/T change)
+## Hypothesis (Path: training-faithful curriculum, no G/T change)
+
+> **PRIMARY fix (added 2026-05-20):** the curriculum is now sampled at the **training budget (5120 tokens)** and **keeps truncated prompts** (`--allow-clipped`), not the old 6144-sample + `--max-length 5120` exclude. Diagnostic: a same-model join of the old 6144-sampled pass-2 difficulty against the pass-2 Kaggle responses showed the sampler clipped 43% of generations and rated 57% of Kaggle-correct prompts as 0-1/4 "hard"; the `--max-length` filter then discarded the long-chain prompts where the model truncates during training — the exact high-value targets. Sampling at 5120 makes num_correct predict training reward variance; keeping clipped prompts retains the live-gradient targets. The matched-sampler change (top_k=-1/top_p=1.0/T=1.0) below is now the *secondary* lever. See memory `project_dsmlp_not_kaggle_proxy`.
+
+### Matched-sampler rationale (secondary)
 
 Pass-2, pass-3, and the pass-4 pilot all confirmed the same thing: only ~10% of GRPO steps produced useful gradient (reward_std > 0). The pilot at PILOT_STEPS=6 was too noisy to discriminate between G=4 and G=6 (`frac_reward_zero_std=0` across all configs is a sample-size artifact, not signal), and the plain read was that G=6 actively *hurt* correctness variance vs G=4 — so we explicitly chose NOT to change G or T.
 
@@ -55,10 +59,10 @@ python scripts/filter_curriculum_v2.py \
   --in  data/difficulty_samples_pass3.jsonl \
   --out experiments/exp_022_grpo_pass4/curriculum_pass4.json \
   --min-correct 2 --max-correct 6 \
-  --max-length 5120 \
+  --allow-clipped \
   --ff-mcq-ratio 2.0
 ```
-Expected output: 60-100 prompts (target band similar to exp_019's 88-prompt strict curriculum). If the band yields < 40 prompts, the policy may be too peaked even at the matched sampler — see "Watch-list" below.
+Difficulty is now sampled at MAX_NEW_TOKENS=5120 (== training max_completion_length), so a truncation here is a real training-time truncation. We KEEP clipped prompts (--allow-clipped) rather than excluding them — a 2-correct/6-truncated prompt still has reward variance and is exactly what GRPO + length_bonus should train on. If the band yields < 40 prompts, the policy truncates so heavily at 5120 that GRPO is budget-limited (a result in itself — argues for raising max_completion or pivoting to SFT, not pass-5).
 
 ### 3. Train (DSMLP, ~3-5h)
 ```

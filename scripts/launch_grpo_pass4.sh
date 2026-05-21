@@ -33,7 +33,7 @@ if [ ! -f "experiments/$EXP/curriculum_pass4.json" ]; then
   echo "  python scripts/filter_curriculum_v2.py \\" >&2
   echo "    --in data/difficulty_samples_pass3.jsonl \\" >&2
   echo "    --out experiments/$EXP/curriculum_pass4.json \\" >&2
-  echo "    --min-correct 2 --max-correct 6 --max-length 5120 --ff-mcq-ratio 2.0" >&2
+  echo "    --min-correct 2 --max-correct 6 --allow-clipped --ff-mcq-ratio 2.0" >&2
   exit 1
 fi
 
