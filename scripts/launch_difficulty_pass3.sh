@@ -108,8 +108,11 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     python -c "import torch, vllm, transformers; print(f\"torch={torch.__version__}  vllm={vllm.__version__}  transformers={transformers.__version__}\")"
     python -c "import torch; assert torch.cuda.is_available(); print(f\"CUDA OK: {torch.cuda.get_device_name(0)}\")"
 
-    # ---- FULL RUN against the pass-3 model, sampler matched to a top_k-disabled
-    #      T=1.0 training. Smoke test first by prepending LIMIT=10. ----
+    # ---- pass-3 model, sampler matched to a top_k-disabled T=1.0 training, at the
+    #      5120 training budget. LIMIT is env-overridable from the OUTER shell:
+    #      `LIMIT=20 bash scripts/launch_difficulty_pass3.sh` smokes 20 prompts;
+    #      bare `bash ...` (LIMIT=0) runs the full 1126. ----
+    LIMIT='"${LIMIT:-0}"' \
     MODEL_ID="TrevorDuong/qwen3-4b-thinking-grpo-pass3" \
     OUT_SUFFIX="pass3" \
     NUM_SAMPLES=8 \
@@ -132,4 +135,4 @@ echo "  ~/151B_SP26_Competition/data/difficulty_samples_pass3.jsonl"
 echo "  ~/151B_SP26_Competition/data/sweet_spot_pass3_ids.json"
 echo ""
 echo "Expected runtime: ~4-8h (N=8 is 2x the pass-2 N=4 run). First chunk in ~10-15 min."
-echo "SMOKE TEST FIRST: prepend LIMIT=10 to the python line and confirm throughput."
+echo "SMOKE TEST FIRST:  LIMIT=20 bash scripts/launch_difficulty_pass3.sh"
