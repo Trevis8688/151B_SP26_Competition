@@ -30,27 +30,29 @@ Usage (inside the clean venv -- see launch_difficulty_v2.sh):
     LIMIT=10 HF_TOKEN=$(cat ~/.hf_token) python scripts/sample_difficulty_v2.py   # smoke test
     HF_TOKEN=$(cat ~/.hf_token) python scripts/sample_difficulty_v2.py            # full run
 """
-import json, os, signal, sys, time
+import atexit, json, os, re, sys, time
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 import torch
 
 
-class _JudgeTimeout(Exception):
-    """Raised when auto_judge exceeds its per-call wall-clock budget."""
-    pass
-
-
-def _alarm_handler(signum, frame):
-    raise _JudgeTimeout()
-
-
-# Per-judgment wall-clock cap. The matched-sampler config (top_k=-1, top_p=1.0, T=1.0)
-# can produce pathological \boxed{} contents that wedge SymPy's parse_latex
-# indefinitely (top_k=20 in earlier runs avoided this by construction). 30s is well
-# above any legitimate auto_judge call (~ms-seconds) but bounded enough to limp past
-# poison prompts. On timeout the prompt is scored as wrong, which is correct: the
-# response is unparseable, the model didn't deliver an evaluable answer.
-JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "30"))
+# SymPy hang defense (replaces an earlier SIGALRM attempt at commit 3f5817a that did
+# NOT fire -- parse_latex runs Antlr's C/Cython runtime without yielding to Python
+# bytecode, so the signal sat pending until return and the run wedged again at the
+# same chunk it had previously). Under the matched-sampler config (top_k=-1, top_p=1.0,
+# T=1.0) the policy occasionally emits pathological \boxed{} contents -- e.g. runaway
+# repetition of the same token, or deeply nested LaTeX -- that parse_latex cannot
+# parse and from which it cannot return. Two layers:
+#   1) MAX_BOXED_LEN -- in-process pre-filter on \boxed{} content length. Real math
+#      and MCQ answers are < 50 chars; > 300 is overwhelmingly runaway garbage. These
+#      short-circuit to wrong without touching SymPy.
+#   2) JUDGE_TIMEOUT_SECONDS -- any auto_judge that survives pre-filter runs in a
+#      one-worker subprocess pool we hard-kill on timeout (concurrent.futures pool
+#      shutdown). This works for C-extension hangs because we terminate the worker
+#      *process*, not the C call.
+JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "15"))
+MAX_BOXED_LEN         = int(os.environ.get("MAX_BOXED_LEN", "300"))
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -100,10 +102,6 @@ from prompts import (  # noqa: E402
     FEWSHOT_MATH, FEWSHOT_MCQ,
 )
 
-from transformers import AutoTokenizer  # noqa: E402
-from vllm import LLM, SamplingParams    # noqa: E402
-from judger import Judger               # noqa: E402
-
 LETTERS = "ABCDEFGHIJ"
 
 # ---- helper functions ----
@@ -112,22 +110,87 @@ def normalize_gold(answer):
         return [str(x) for x in answer]
     return [str(answer)]
 
-def score_response(judger_inst, text, gold, options):
+
+# Pre-filter helper: extract the LAST \boxed{...} content from a response, honoring
+# brace nesting. Returns None on missing-boxed or unbalanced-braces -- both treated
+# as poison (cannot evaluate -> wrong).
+_BOXED_OPEN_RE = re.compile(r"\\boxed\{")
+def _last_boxed_content(text):
+    matches = list(_BOXED_OPEN_RE.finditer(text))
+    if not matches:
+        return None
+    start = matches[-1].end()
+    depth = 1
+    i = start
+    n = len(text)
+    while i < n and depth > 0:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            i += 2  # skip escaped char (e.g. \{ \})
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+        i += 1
+    return None  # unbalanced
+
+# ---- subprocess judge worker (spawn ctx, distinct from vLLM's mp infra) ----
+# Worker globals (only touched inside the worker process; main proc leaves them None).
+_worker_judger = None
+def _worker_init():
+    """Run once per worker process. Imports Judger fresh inside the worker."""
+    global _worker_judger
+    from judger import Judger
+    _worker_judger = Judger()
+
+def _judge_call(text, gold_list, opts_per_gold):
+    """Run inside the worker. _worker_judger is set by _worker_init at pool startup."""
+    return bool(_worker_judger.auto_judge(pred=text, gold=gold_list, options=opts_per_gold))
+
+_SPAWN_CTX = mp.get_context("spawn")
+_pool = None
+def _get_pool():
+    global _pool
+    if _pool is None:
+        _pool = ProcessPoolExecutor(max_workers=1, mp_context=_SPAWN_CTX,
+                                    initializer=_worker_init)
+    return _pool
+
+def _reset_pool():
+    """Hard-kill the current pool. The next _get_pool() spins up a fresh worker."""
+    global _pool
+    if _pool is not None:
+        _pool.shutdown(wait=False, cancel_futures=True)
+        _pool = None
+
+atexit.register(_reset_pool)
+
+
+def score_response(text, gold, options):
+    """Score one response. Two-layer hang defense (see comment block at top)."""
     gold_list = normalize_gold(gold)
     opts_per_gold = [options if options else []] * len(gold_list)
-    # SIGALRM-based timeout: see JUDGE_TIMEOUT_SECONDS above. score_response is called
-    # from the main thread of the main process (after llm.generate returns), so SIGALRM
-    # is delivered correctly. The handler raises _JudgeTimeout, which the broad except
-    # below catches just like any other judge error -> score as wrong.
-    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-    signal.alarm(JUDGE_TIMEOUT_SECONDS)
-    try:
-        return bool(judger_inst.auto_judge(pred=text, gold=gold_list, options=opts_per_gold))
-    except Exception:
+
+    # Layer 1: in-process pre-filter on extracted \boxed{} content.
+    boxed = _last_boxed_content(text)
+    if boxed is None or len(boxed) > MAX_BOXED_LEN:
         return False
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
+
+    # Layer 2: subprocess timeout. The worker can be hard-killed via pool shutdown
+    # regardless of where SymPy is stuck (handles C-extension hangs that SIGALRM cannot).
+    try:
+        pool = _get_pool()
+        fut = pool.submit(_judge_call, text, gold_list, opts_per_gold)
+        return fut.result(timeout=JUDGE_TIMEOUT_SECONDS)
+    except FuturesTimeout:
+        _reset_pool()  # worker wedged in C code; throw it away
+        return False
+    except Exception:
+        _reset_pool()  # any other pool error -- play it safe, force a fresh worker
+        return False
 
 def build_prompt(tokenizer_inst, ex):
     is_mcq = bool(ex.get("options"))
@@ -144,7 +207,13 @@ def build_prompt(tokenizer_inst, ex):
 # MAIN EXECUTION BLOCK (Protects against multiprocessing spawn errors)
 # =====================================================================
 if __name__ == "__main__":
-    
+    # Heavy imports live INSIDE __main__ so spawn'd judge workers re-importing this
+    # module don't pay the vLLM / transformers import cost (vLLM init alone is ~30s
+    # and would dwarf the per-call judging budget). The worker only needs `judger`,
+    # which it imports itself inside _worker_init.
+    from transformers import AutoTokenizer
+    from vllm import LLM, SamplingParams
+
     # Check CUDA status safely inside the main block
     print(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE'}", flush=True)
     print(f"torch={torch.__version__}  cuda={torch.version.cuda}  bf16={torch.cuda.is_bf16_supported()}", flush=True)
@@ -179,8 +248,8 @@ if __name__ == "__main__":
         print(f"LIMIT={LIMIT} -> smoke test on {len(todo)} prompts", flush=True)
     print(f"To sample: {len(todo)} prompts x {NUM_SAMPLES} = {len(todo)*NUM_SAMPLES} generations", flush=True)
 
-    # ---- judger ----
-    judger = Judger()
+    # Judger lives in the subprocess worker (see _worker_init); the main process never
+    # calls auto_judge directly. This keeps SymPy hangs out of the main loop.
 
     if todo:
         hf_token = os.environ.get("HF_TOKEN")
@@ -230,7 +299,7 @@ if __name__ == "__main__":
                         text = comp.text
                         length = len(comp.token_ids)
                         clipped = (comp.finish_reason == "length")
-                        ok = score_response(judger, text, ex["answer"], ex.get("options"))
+                        ok = score_response(text, ex["answer"], ex.get("options"))
                         samples.append({"length": length, "clipped": clipped, "correct": ok})
                         if ok:      num_correct += 1
                         if clipped: num_clipped += 1
