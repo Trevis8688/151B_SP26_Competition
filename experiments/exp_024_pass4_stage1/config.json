@@ -1,0 +1,16 @@
+{
+  "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-pass4",
+  "max_tokens": 8192,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "num_samples": 1,
+  "split": "full",
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  },
+  "notes": "Stage-1 inference with the merged exp_022 GRPO pass-4 policy. SINGLE variable changed from exp_020: model_id (pass-3 -> pass-4). Same prompts (3 MCQ few-shots) and sampling config to stay in-distribution with GRPO training. The merged model is built by merge_and_push.ipynb (checkpoint-130; the 12h pod timed out at step 137/138, LR already annealed to ~2e-7 so 130 is effectively final). PER REVISED CRITERION (see exp_022 notes): the decisive signal is a stage-1-ONLY leaderboard submission vs the 0.586 pass-2/pass-3 floor, NOT local %. Build submission with scripts/build_submission_from_responses.py and submit raw before any rescue layer."
+}
