@@ -89,8 +89,9 @@ def main():
     print(f"Loaded {len(rows)} sampled prompts from {inp}")
 
     nc_dist = Counter(r["num_correct"] for r in rows)
+    nc_max = max(nc_dist) if nc_dist else 0
     clip_total = sum(1 for r in rows if r["num_clipped"] > 0)
-    print(f"num_correct distribution: " + "  ".join(f"{k}={nc_dist.get(k,0)}" for k in range(5)))
+    print(f"num_correct distribution: " + "  ".join(f"{k}={nc_dist.get(k,0)}" for k in range(nc_max + 1)))
     print(f"Prompts with >=1 clipped sample: {clip_total}/{len(rows)}")
 
     kept = filter_rows(rows, args.min_correct, args.max_correct, args.allow_clipped, args.max_length)
@@ -120,7 +121,7 @@ def main():
             "max_length": args.max_length,
             "ff_mcq_ratio": args.ff_mcq_ratio,
         },
-        "num_correct_distribution": {str(k): nc_dist.get(k, 0) for k in range(5)},
+        "num_correct_distribution": {str(k): nc_dist.get(k, 0) for k in range(nc_max + 1)},
     }
     with open(outp, "w") as f:
         json.dump(payload, f, indent=2)
