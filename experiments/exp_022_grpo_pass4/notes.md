@@ -29,7 +29,7 @@ For pass-4 we close this gap. Difficulty is re-sampled from the pass-3 policy wi
 
 **Headline E[Δ]: +0.18pp at stage-1** vs exp_020 (range: -0.05 to +0.50pp). Smaller projection than pass-3's +1.77pp lift, because (a) the policy has had two prior passes already and KL room is shrinking, (b) this is a curriculum intervention, not a recipe change.
 
-**Decision point** (vs exp_020's 56.84% pass-2 / 58.61% pass-3 stage-1 floors): if pass-4 lifts ≥ +0.3pp stage-1, layer rescue (exp_023) and submit. If < +0.2pp, the GRPO well is converging and the next move is SFT v2 — not pass-5.
+**Decision point (REVISED 2026-05-21 — see "Stage-1 leaderboard discriminator" below):** judge pass-4 on a **stage-1-only leaderboard submission**, NOT local lift. The 2026-05-21 discriminator showed pass-3 booked +1.77pp local stage-1 over pass-2 yet transferred **0pp** to the leaderboard (both 0.586) — so a local stage-1 win does not predict a board win. Submit pass-4 stage-1 raw (no rescue) and compare to the 0.586 pass-2/pass-3 stage-1 floor. If pass-4 stage-1 ≥ ~0.59 on the board (clear of the ~2.3pp split noise), it's a real lever → layer the exp_018/exp_014 rescue stack and submit. If it ties 0.586, the GRPO well is converging on the board regardless of local — pivot to (a) diagnosing the rescue stage, or (b) SFT v2 — not pass-5.
 
 ## Change from baseline (exp_019)
 
@@ -83,14 +83,35 @@ Same workflow as exp_020/exp_021: scaffold exp_023 (stage-1) + exp_024 (rescue) 
 - Mean entropy. Should be ≥ 0.22 (the pilot's G=4/T=1.0 reference); a meaningful drop would indicate the matched curriculum pulled in harder prompts.
 - KL. Anything > 0.02 cumulative is unusual for a same-recipe continuation; would suggest a regime shift.
 
-## Success / abort criteria
+## Stage-1 leaderboard discriminator (2026-05-21)
 
-| Stage-1 (vs exp_020 58.61%) | Interpretation | Action |
+To separate "pass-3 weights regressed on private" from "exp_023's rescue stage misbehaved", submitted both stage-1 outputs RAW (no rescue) to Kaggle:
+
+| Stage-1 only (no rescue) | Leaderboard (public split, ~470 q, σ≈2.3pp) | Local public.jsonl |
+|---|---:|---:|
+| pass-2 (exp_017) | **0.586** | 56.84% |
+| pass-3 (exp_020) | **0.586** | 58.61% |
+
+**Findings:**
+1. **Within noise of identical** (point-estimate gap = 0). No large pass-3 weight regression on the held-out set → **pass-4-on-pass-3 base is sound; do NOT rebase on pass-2.** exp_023's 0.604 loss was the rescue interaction (strict70 rescuer tuned on pass-3 outputs, fed pass-2 FF inputs), not pass-3 weights.
+2. **Pass-3's +1.77pp local stage-1 gain transferred 0pp to the board.** Local public.jsonl overlaps the GRPO training distribution; the leaderboard is held out. Local stage-1 lift does NOT predict board lift — hence the revised abort criterion above. (Caveat: one tied point can't distinguish "GRPO overfits public" from "pass-3 gains sit in question types the split weights differently" — the pass-4 stage-1 board submission is the second data point.)
+3. **Rescue is the lever, not more GRPO passes.** Stage-1 is interchangeable on the board; all real variation lives downstream:
+   - pass-2 stage-1 (0.586) + exp_014 rescue → **0.628** (+0.042)
+   - pass-3 stage-1 (0.586) + pass-3 rescue → 0.611 (+0.025)
+   - pass-3 MCQ + pass-2 FF + strict70 rescue → 0.604 (mismatched rescue)
+   After pass-4 lands, highest-EV move is diagnosing why exp_018's rescue beat exp_021's by 1.7pp — not pass-5.
+
+## Success / abort criteria (REVISED 2026-05-21 — leaderboard, not local)
+
+Judge pass-4 on a **stage-1-only leaderboard submission** vs the 0.586 pass-2/pass-3 stage-1 floor (split noise ~2.3pp). Local stage-1 lift is no longer a valid criterion (finding #2 above).
+
+| Pass-4 stage-1 board (vs 0.586) | Interpretation | Action |
 |---|---|---|
-| ≥ +0.3pp | Matched-sampler curriculum is a real lever | Rescue (exp_024), submit if ≥ exp_021's 62.17% |
-| +0.1 to +0.3pp | Modest win consistent with E[Δ] | Rescue and evaluate; pass-5 worth a longer pilot |
-| -0.1 to +0.1pp | No effect; the gap wasn't the bottleneck | Skip rescue submit; **pivot to SFT v2** |
-| < -0.1pp | Regression | Discard; investigate via earlier checkpoints |
+| ≥ ~0.59 (clear of split noise) | Matched-sampler curriculum is a real board lever | Layer exp_018/exp_014 rescue, submit if ≥ 0.628 |
+| ~0.586 (tie) | GRPO converged on the board regardless of local | **No pass-5.** Pivot: diagnose rescue stage, or SFT v2 |
+| < ~0.58 | Board regression | Discard; investigate earlier checkpoints |
+
+_(Local stage-1 numbers still recorded below for continuity, but they are diagnostic-only — not a go/no-go signal.)_
 
 ## Results
 
