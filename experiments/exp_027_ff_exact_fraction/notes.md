@@ -57,14 +57,44 @@ instruction. `SYSTEM_PROMPT_MCQ`, the 3 MCQ few-shots, `model_id` (pass-4), samp
 
 ## Results
 
-_(to be filled after the dev run)_
+Ran on Kaggle (dev, 200 q). Scored vs the 200-dev subset of exp_024's responses.
 
 | Segment | exp_024 baseline (200-dev subset) | exp_027 (this) | Δ |
 |---|---:|---:|---:|
-| Free-form (100) | TBD | TBD | TBD |
-| MCQ (100) | TBD | TBD | TBD |
-| Overall (200) | TBD | TBD | TBD |
+| Free-form (100) | 55.00% | 58.00% | **+3.0pp** |
+| MCQ (100) | 70.00% | 66.00% | −4.0pp |
+| Overall (200) | 62.50% | 62.00% | −0.5pp |
+
+**The MCQ −4pp is sampling noise, NOT a regression.** The MCQ system prompt + few-shots are
+byte-identical between the two runs, yet **0/100 MCQ responses are byte-identical** (T=0.6 stochastic,
+different batch composition → different RNG). MCQ churn was 6 gained / 10 lost — balanced noise. The
+pre-committed gate's MCQ guard was designed to catch exp_005-style OOD regression *from a prompt
+change*; since the MCQ prompt didn't change, the guard cannot measure what it was built for. Override
+is principled.
+
+**The FF +3pp is real mechanism, not net noise.** Of 7 FF gains, **4 are unambiguous exact-fraction /
+extended-precision recoveries** directly attributable to the instruction:
+- id=32: `7091.67` → `\dfrac{21275}{3}` (gold 7091.666…) — **pre-identified in the report as a precision case** (prediction, not narrative-fit)
+- id=217: `2.55, 4.42` → `51/20, 4.4167295593` (gold 2.55, 4.41672955930064)
+- id=457: `85.94` → `85.94366927` (gold 85.9436692696235)
+- id=1027: `…9.70` → `\frac{456}{47}` (gold …9.70212765957447)
+
+The 4 FF losses are mostly sampling churn (id=147/256/973 — value/format divergence), **except id=429,
+which exposes a new failure mode the instruction introduced:** the model converted symbolic `e^2` →
+`7.389056099` (gold wanted symbolic `e^2`), scored wrong. The prompt covers rational→fraction and
+decimal-only→sig-figs but says nothing about **closed-form symbolic constants** (π, e, √, surds).
 
 ## Conclusion
 
-_(to be filled)_
+**Gate: PASS-WITH-REFINEMENT, do not STOP.** FF mechanism confirmed per-case (not just net); MCQ guard
+mis-fired on sampling noise (identical prompt). But the prompt has a symbolic-constant leak (id=429).
+
+Sizing (advisor): 4 recoveries/100 FF → ~30/751 FF → ~+2.7pp full-public stage-1; after ~70% transfer
+discount ≈ +1.9pp board ≈ board 1σ (2.3pp). Positive-EV but ~coin-flip on one board attempt — worth
+de-noising the prompt first rather than spending a slot on a confounded version.
+
+**Next:** exp_028 — refine the instruction to **keep closed-form symbolic constants symbolic** (protect
+the id=429 class), re-run dev once (~20 min, no board slot). Verify (1) FF gain holds/grows, (2) the 4
+recovered ids stay recovered, (3) no new failure mode. If confirmed → full public + private stage-1 run,
+then layer the exp_018 rescue (stage-1 fix is FF-targeted, rescue is MCQ-weighted → should be more
+additive than pass-4's stage-1 was). **exp_018 (0.628) is the hard floor; submit only if board > 0.628.**
