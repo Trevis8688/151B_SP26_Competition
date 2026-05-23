@@ -1,0 +1,22 @@
+{
+  "_comment": "exp_025 — pass-4 stage-1 + exp_018/exp_014 rescue stack. SINGLE-variable swap from exp_018: source_experiment exp_017_pass2_stage1 → exp_024_pass4_stage1. Rescue model_id, rescue prompts, all token budgets, and vLLM sizing are IDENTICAL to exp_018 (the +0.042 rescue config, stronger than exp_021's +0.025). Tests whether pass-4's +1.4pp stage-1 board gain (0.586 → 0.600) compounds with the proven rescue stack. Current best to beat: exp_018 = 0.628. Target: must clear 0.628 convincingly (not by a hair) given pass-4 stage-1 was only ~0.6σ over the floor.",
+  "source_experiment": "exp_024_pass4_stage1",
+  "stage1_dataset_name": "exp-024-pass4-stage1-responses",
+  "rescue": {
+    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-strict70",
+    "_model_id_note": "Kept as the exp_009 GRPO strict70 rescuer (NOT pass-4), identical to exp_018, to isolate the change to stage-1 only. exp_014 lesson: this rescuer lifts MCQ but is saturated on free-form. Swapping the rescuer to pass-4 would mix two variables — do that as a follow-up only if exp_025 wins.",
+    "max_tokens": 4096,
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_input_tokens_from_stage1": 3000
+  },
+  "vllm": {
+    "max_model_len": 8192,
+    "max_num_seqs": 24,
+    "max_num_batched_tokens": 16384,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  },
+  "notes": "Identical to exp_018 except source_experiment + stage1_dataset_name. Same rescue prompts, same rescuer model, same token budget, same vLLM sizing. Cheapest test of whether pass-4's stage-1 board gain compounds with the existing rescue stack."
+}
