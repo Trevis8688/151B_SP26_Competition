@@ -52,11 +52,21 @@ _(to be filled after merge + inference + submission)_
 
 | | exp_017 pass-2 | exp_020 pass-3 | exp_024 pass-4 |
 |---|---:|---:|---:|
-| Leaderboard stage-1-only | 0.586 | 0.586 | TBD |
-| Local public.jsonl | 56.84% | 58.61% | TBD |
-| Local MCQ | — | 66.67% | TBD |
-| Local free-form | — | 54.59% | TBD |
+| Leaderboard stage-1-only | 0.586 | 0.586 | **0.600** |
+| Local public.jsonl | 56.84% | 58.61% | **60.75%** |
+| Local MCQ | — | 66.67% | **70.13%** |
+| Local free-form | — | 54.59% | **56.06%** |
+
+Local error buckets (public, 1126): correct 684 (60.7%), missing_boxed 103 (9.1%), wrong_mcq 57 (5.1%), wrong_math 282 (25.0%).
+
+**Local read:** +2.14pp overall over pass-3 stage-1 (MCQ +3.46pp, FF +1.47pp) — the largest local stage-1 gain yet, and already above exp_018's full-stack local (60.39%) at stage-1 with no rescue. BUT this is the contaminated signal (curriculum was sampled from public.jsonl). Pass-3 booked +1.77pp local → 0pp board. So this is encouraging, not decisive — the stage-1-only leaderboard submission is the real test. The local gain being *larger* than pass-3's is in mild tension with the ~7% live-step prior; only the board resolves whether the matched curriculum helped or just overfit public harder.
 
 ## Conclusion
 
-_(to be filled)_
+**Pass-4 stage-1 board = 0.600 — the first stage-1 leaderboard improvement in the GRPO line (+1.4pp over the 0.586 pass-2/pass-3 floor).** Breaks the exact pass-2/pass-3 tie. Crosses the pre-committed ≥0.59 threshold → matched-sampler curriculum is a (modest) real lever; proceed to layer rescue.
+
+Key contrast vs pass-3: pass-3's +1.77pp local gain transferred 0pp to the board; pass-4's +2.14pp local gain transferred ~+1.4pp. So the matched-sampler curriculum (top_k=−1/N=8/5120-budget/allow-clipped) produced a board-transferable gain where the top_k=20 curriculum did not. This is the second data point on local→board transfer (see memory `grpo-local-no-transfer`, now revised).
+
+Caveat: +1.4pp ≈ 0.6σ on the ~470-question split — at the edge of noise, not conclusive. The rescue layer (next exp) must clear 0.628 convincingly to call pass-4 a true new best; exp_018's rescue added +0.042 over its 0.586 stage-1, so 0.600 + a comparable lift ≈ 0.64 is the target.
+
+**Next:** scaffold the pass-4 rescue experiment (exp_025), reusing the exp_018/exp_014 rescue stack (the stronger of the two rescue configs — exp_018 added +0.042 vs exp_021's +0.025). Submit; new best only if > 0.628.
