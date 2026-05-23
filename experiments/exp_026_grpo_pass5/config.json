@@ -1,0 +1,48 @@
+{
+  "_comment": "exp_026 — GRPO pass 5 from the pass-4 merged model. SINGLE intentional change from exp_022 (the pass-4 recipe): the base model and curriculum advance one pass. Same G=4, T=1.0, max_completion=5120, lr=2e-5, beta=0.01, length_bonus, matched-sampler curriculum recipe. pass-4 was the FIRST pass to move the board (0.586 -> 0.600 stage-1-only, ~+1.4pp / ~0.6sigma); the matched-sampler curriculum (top_k disabled, N=8, 5120 budget, allow-clipped) is the recipe that produced that board-transferable gain where the old top_k=20 curriculum did not. pass-5 tests whether that recipe keeps paying or whether 0.600 was a one-time step off the converged plateau. STOPPING RULE (pre-committed): pass-5 stage-1-only board must beat pass-4's 0.600 by >= +1pp (>= 0.610) to justify pass-6; a tie at ~0.600 means GRPO has converged on the board -> STOP, gains stand, pivot. See experiments/exp_022_grpo_pass4/notes.md and memory grpo-local-no-transfer.",
+  "base_model": "TrevorDuong/qwen3-4b-thinking-grpo-pass4",
+  "output_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass5",
+  "adapter_checkpoints_repo": "TrevorDuong/qwen3-4b-thinking-grpo-pass5-ckpt",
+  "curriculum_file": "curriculum_pass5.json",
+  "_curriculum_note": "Build with: python scripts/filter_curriculum_v2.py --in data/difficulty_samples_pass4.jsonl --out experiments/exp_026_grpo_pass5/curriculum_pass5.json --min-correct 2 --max-correct 6 --allow-clipped --ff-mcq-ratio 2.0. IDENTICAL filter recipe to pass-4. Difficulty is sampled from the PASS-4 policy (not pass-3) at the training-matched per-token distribution (top_k=-1, top_p=1.0, T=1.0, N=8) at MAX_NEW_TOKENS=5120 == training max_completion_length, --allow-clipped (a clip is a real training-time truncation, a live-gradient target). Sampler script: scripts/launch_difficulty_pass4.sh (MODEL_ID=pass-4, OUT_SUFFIX=pass4 -> data/difficulty_samples_pass4.jsonl). If the post-filter curriculum is <40 prompts, that itself signals pass-4 has saturated this prompt set at 5120 — weak prior for a pass-5 gain.",
+  "training": {
+    "epochs": 1,
+    "learning_rate": 2e-5,
+    "beta": 0.01,
+    "num_generations": 4,
+    "max_prompt_length": 1024,
+    "max_completion_length": 5120,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.0,
+    "temperature_train": 1.0,
+    "save_strategy": "steps",
+    "save_steps": 10,
+    "save_total_limit": 5,
+    "use_vllm": false
+  },
+  "reward": {
+    "correctness_weight": 1.0,
+    "format_weights": {
+      "has_think_close": 0.05,
+      "has_boxed": 0.10,
+      "boxed_post_think": 0.05,
+      "single_boxed_post_think": 0.025
+    },
+    "length_bonus": {
+      "max": 0.05,
+      "cap_chars": 16384,
+      "note": "Same as exp_015/exp_019/exp_022. Continuous descent from 0.05 at len=0 to 0.0 at cap; guarantees nonzero reward_std even when discrete reward terms collapse across the 4 generations in a group."
+    }
+  },
+  "_ref_model_note": "ref_model intentionally unset — TRL defaults ref=base_model=pass-4 GRPO. Do NOT override to an earlier pass (would pull policy backward).",
+  "vllm": {
+    "_note": "Kaggle inference config after training. Use cse151b-notebook with model_id=output_repo (after running merge_and_push.ipynb to merge the adapter).",
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  }
+}
