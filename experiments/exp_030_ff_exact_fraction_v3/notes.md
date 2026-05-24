@@ -42,16 +42,36 @@ MCQ is diagnostic-only (sampling noise; prompt unchanged). **exp_018 (0.628) is 
 
 ## Results
 
-_(to be filled after the dev run)_
+First Kaggle attempt ran with a **stale dataset** (didn't refresh the version after committing
+exp_030) and ran ~1h on a wrong/old config; discarded. Re-ran after refreshing the
+`151b-experiments` dataset version → 200 dev questions confirmed loaded.
 
 | Segment | exp_024 baseline | exp_028 (v2) | exp_030 (v3) | Δ v3 vs baseline |
 |---|---:|---:|---:|---:|
-| Free-form (100) | 55.00% | 60.00% | TBD | TBD |
-| MCQ (100) | 70.00% | 71.00% | TBD | TBD |
-| Overall (200) | 62.50% | 65.50% | TBD | TBD |
+| Free-form (100) | 55.00% | 60.00% | **60.00%** | **+5.0pp** |
+| MCQ (100) | 70.00% | 71.00% | 74.00% | +4.0pp (noise — MCQ prompt byte-identical) |
+| Overall (200) | 62.50% | 65.50% | **67.00%** | +4.5pp |
 
-Per-case: id=217 recovered? __ ; id=429 still fixed? __ ; id=32/457/1027 still correct? __ ; new echo artifacts? __
+Per-case:
+- **id=217 echo recovered? YES** — boxes `\boxed{\frac{51}{20}}` (=2.55), no more literal `a/b`.
+  Still judged wrong (gold is 2-valued, boxed one) but the self-inflicted echo defect is fixed.
+- **id=429 symbolic fix held? YES** — `\boxed{8, e^2, growth}`, correct; e² not decimalized.
+- **id=32 / id=457 still correct? YES** — id=32 `\dfrac{21275}{3}`, id=457 85.9436... (correct).
+- **New echo artifact? MINOR** — the retained `\boxed{3, 7}` multi-value example leaked into
+  id=457's output but did not cause a miss. Watch for it on the full set; not a blocker.
+- (id=1027 wrong = multi-box length-mismatch / exp_005 class, not a precision failure; not a gate id.)
 
 ## Conclusion
 
-_(to be filled)_
+**PASS — promote.** FF held at +5.0pp with the per-case mechanism verified (exact-fraction +
+symbolic-constant recoveries), and the v2 `a/b` echo is eliminated by dropping the literal `\boxed{}`
+placeholders. This is the clean FF-precision prompt.
+
+Caveat: FF n=100 → dev 1σ≈5pp, so the +5pp aggregate is ~1σ; what makes it trustworthy is the
+per-case recoveries (judger now matches symbolically), not the headline number. Board transfer is
+lossy (see [[project_grpo_local_no_transfer]]) so the promote step is a real board test, not a
+local declaration.
+
+**Next:** the FF-precision prompt is orthogonal to the GRPO base. Sequence it AFTER exp_029
+decides the base model (pass-5 vs pass-4), then run this prompt on the winning base for a full
+public+private stage-1 run, layer the exp_018 rescue stack, and board-test vs the 0.628 floor.

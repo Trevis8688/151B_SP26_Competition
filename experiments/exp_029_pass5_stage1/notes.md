@@ -49,13 +49,39 @@ Judge vs pass-4's **0.600** stage-1-only floor. Board 1σ ≈ 2.3pp on the ~470-
 
 ## Results
 
-_(to be filled after the stage-1-only board submission)_
-
 | | exp_017 pass-2 | exp_020 pass-3 | exp_024 pass-4 | exp_029 pass-5 |
 |---|---:|---:|---:|---:|
-| Leaderboard stage-1-only | 0.586 | 0.586 | 0.600 | TBD |
-| Local public.jsonl | 56.84% | 58.61% | 60.75% | TBD |
+| Leaderboard stage-1-only | 0.586 | 0.586 | 0.600 | **0.586** |
+| Local public.jsonl | 56.84% | 58.61% | 60.75% | **62.43%** |
+| Local MCQ | — | — | 70.13% | 73.87% |
+| Local free-form | — | — | 56.06% | 56.72% |
+
+Local stage-1 (full public, matched: original prompts, same sampling): pass-5 **+1.68pp overall**
+over pass-4 (MCQ +3.74pp, FF +0.66pp) — the gain was almost entirely MCQ.
+
+Board: **0.586 = −1.4pp vs the 0.600 pass-4 floor.** Trips the `< ~0.59` regression branch.
 
 ## Conclusion
 
-_(to be filled)_
+**REGRESSION — discard pass-5. STOP GRPO.** A textbook local↔board inversion: +1.68pp local (MCQ-driven)
+→ −1.4pp board. The MCQ local gain was overfitting to public.jsonl, not generalization; on the held-out
+board it landed back at the pass-2/pass-3 plateau (0.586). This is the second consecutive sign (after
+pass-3's +1.77pp local → 0pp board) that GRPO scaling is no longer a live board lever — pass-4's +1.4pp
+was a one-time step off the plateau, not the start of a climb. See [[project_grpo_local_no_transfer]].
+
+**pass-4 stands as the best GRPO stage-1** (board 0.600 stage-1; 0.621 full stack via exp_025). Note even
+the pass-4 full stack (0.621) is below the **exp_018 champion (0.628)**, which remains the locked best.
+
+**Decisions:**
+- DISCARD pass-5; do NOT build a pass-6 curriculum. Kill/abandon the DSMLP `launch_difficulty_pass5.sh`
+  sampling job — it was conditional on exp_029 ≥ ~0.610 and that gate failed.
+- Redirect all remaining time (~1 wk) to the **FF-precision track** (exp_030, dev-validated +5pp FF).
+  Layer it on the **pass-2** base (the 0.628 champion's base), NOT pass-4. Reason: the goal is beating
+  0.628, so the cleanest path is a single-variable change from the champion config (exp_018 = pass-2
+  stage-1 + exp_014 rescue). exp_025 proved pass-4 full-stack (0.621) is *below* the pass-2 stack (0.628)
+  because rescue is non-additive and tuned to pass-2's residuals — switching base would trade a +0.014
+  stage-1 gain for a known rescue-interaction loss. The FF prompt is format-driven, not capability-driven,
+  so the +5pp dev lift should port to pass-2 (same OOD shift; both trained on original prompts).
+- Plan: (1) dev-probe pass-2 + exp_030 prompt (~20min, verify FF lifts ~+5pp on pass-2 too); (2) if yes,
+  full public+private on pass-2 + exp_030 prompt + exp_014 rescue = exp_018 config except the prompt →
+  board vs 0.628. Check full-run output for any `\boxed{3, 7}` echo leaks before locking the prompt.
