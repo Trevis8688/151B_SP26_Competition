@@ -56,8 +56,9 @@ Judge vs pass-4's **0.600** stage-1-only floor (split noise ~2.3pp = 1σ). Local
 
 _(to be filled after curriculum build + training + merge + stage-1-only submission)_
 
-- Curriculum size after filter: TBD (MCQ / FF) — flag if < 40.
-- Training: TBD grad updates; live-step fraction TBD.
+- Curriculum size after filter: **156 (52 MCQ, 104 FF)** — well above the 40 floor; pass-4 has NOT saturated the prompt set. num_correct dist at N=8: 0=580, 1=131, 2=54, 3=47, 4=26, 5=30, 6=38, 7=59, 8=161 (bimodal; band [2,6]=195 pre-cap, 156 after FF:MCQ≤2.0). 697/1126 prompts had ≥1 clipped sample at 5120.
+- Training: **completed — 130 grad updates** (checkpoints checkpoint-10 … checkpoint-130 in `…-pass5-ckpt`). The inline merge at end of `train_grpo.py` succeeded: merged model `TrevorDuong/qwen3-4b-thinking-grpo-pass5` = 8.04 GB single `model.safetensors`, last modified 2026-05-23 21:05Z. No Kaggle merge step needed — loads directly in vLLM.
+- Stage-1-only board test scaffolded as **exp_029_pass5_stage1** (model_id swap pass-4→pass-5; original prompts; full split). Decisive vs the 0.600 pass-4 floor.
 
 | | exp_017 pass-2 | exp_020 pass-3 | exp_024 pass-4 | exp_026 pass-5 |
 |---|---:|---:|---:|---:|

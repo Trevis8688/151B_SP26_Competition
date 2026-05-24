@@ -1,0 +1,16 @@
+{
+  "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-pass5",
+  "max_tokens": 8192,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "num_samples": 1,
+  "split": "full",
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  },
+  "notes": "Stage-1 inference with the merged exp_026 GRPO pass-5 policy. SINGLE variable changed from exp_024: model_id (pass-4 -> pass-5). Same prompts (3 MCQ few-shots, original SYSTEM_PROMPT_MATH — must match GRPO training distribution; this is NOT the exp_027/028 exact-fraction track) and sampling config. The merged pass-5 model is the INLINE merge produced at the end of train_grpo.py (8.04 GB model.safetensors, last modified 2026-05-23 21:05Z, checkpoint-130 final — no Kaggle merge_and_push step needed; loads directly in vLLM). DECISIVE SIGNAL: a stage-1-ONLY leaderboard submission vs the 0.600 pass-4 floor (NOT local %). Build submission with scripts/build_submission_from_responses.py and submit raw before any rescue layer."
+}
