@@ -1,0 +1,16 @@
+{
+  "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-pass4",
+  "max_tokens": 8192,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "num_samples": 1,
+  "split": "dev",
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90
+  },
+  "notes": "DEV-ONLY cheap probe, v3 of the FF-precision track. SINGLE variable changed from exp_028: REMOVE all literal \\boxed{} examples from the precision instruction (keep abstract wording + the original \\boxed{3,7} multi-value example which is part of the GRPO training prompt). Fixes the exp_028 id=217 artifact (model regurgitated the literal placeholder \\boxed{a/b} as its answer — exp_005 / no-concrete-fewshot-answers failure). MCQ prompt byte-identical. model_id (pass-4), sampling, vLLM sizing all identical. split=dev (200 q). Goal: confirm FF holds >=+5pp AND id=217 recovers AND id=429 stays fixed AND no new echo artifact. Baseline = 200-dev subset of exp_024. exp_018 (0.628) is the hard floor; promote to full board run only if dev confirms clean."
+}

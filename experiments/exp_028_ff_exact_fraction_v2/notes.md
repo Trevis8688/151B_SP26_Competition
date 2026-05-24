@@ -48,16 +48,30 @@ MCQ is **diagnostic-only** here — its delta is sampling noise (prompt unchange
 
 ## Results
 
-_(to be filled after the dev run)_
+Ran on Kaggle (dev, 200 q). Scored vs the exp_024 200-dev subset.
 
 | Segment | exp_024 baseline | exp_027 (v1) | exp_028 (v2) | Δ v2 vs baseline |
 |---|---:|---:|---:|---:|
-| Free-form (100) | 55.00% | 58.00% | TBD | TBD |
-| MCQ (100) | 70.00% | 66.00% | TBD | TBD |
-| Overall (200) | 62.50% | 62.00% | TBD | TBD |
+| Free-form (100) | 55.00% | 58.00% | **60.00%** | **+5.0pp** |
+| MCQ (100) | 70.00% | 66.00% | 71.00% | +1.0pp (noise) |
+| Overall (200) | 62.50% | 62.00% | 65.50% | +3.0pp |
 
-Per-case checks: id=32/217/457/1027 still correct? __ ; id=429 recovered? __ ; new failure modes? __
+FF flips vs baseline: **net +5 (6 gained, 1 lost)** — cleaner than v1's +3.
+
+Per-case checks:
+- **Symbolic protection WORKED:** id=429 recovered (v1 False → v2 True), boxed `8, e^2, \text{growth}`. The leak is plugged.
+- id=32 ✓ (`\dfrac{21275}{3}`), id=457 ✓ (`85.94366927`), id=1027 ✓ (`470x-390, \frac{456}{47}`) all stayed correct.
+- **NEW artifact — id=217 regressed (v1 True → v2 False): the model boxed the literal `a/b`.** It copied the placeholder out of the prompt's `(for example \boxed{a/b})`. This is the documented exp_005 / [[feedback_no_concrete_fewshot_answers]] failure — Qwen3-Thinking echoes concrete example tokens under uncertainty.
+- Only other loss: id=973 (gold `C`, an FF-classified *letter* question; model gave `30682`). Same edge case that churned in v1 — sampling, not our change.
 
 ## Conclusion
 
-_(to be filled)_
+**Net win (+5pp FF) and the symbolic fix is confirmed — but the prompt has a copyable-placeholder leak.**
+Putting `\boxed{a/b}` (and `\boxed{e^2}`, `\boxed{3\sqrt{2}}`) as literal examples invites regurgitation;
+id=217 proved it. Fix is trivial: drop all boxed examples, phrase the instruction abstractly ("exact
+reduced fraction", "keep symbolic form").
+
+**Next: exp_030 (v3)** — same instruction, no literal `\boxed{}` examples. Verify on dev that (1) FF
+holds ≥ +5pp, (2) id=217 comes back AND id=429 stays fixed, (3) no new echo artifact. If clean →
+promote to the full public+private stage-1 run + stage-1-only board test, then layer exp_018 rescue.
+**exp_018 (0.628) is the hard floor.**
