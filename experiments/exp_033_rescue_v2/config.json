@@ -1,0 +1,27 @@
+{
+  "_comment": "exp_033 — RESCUE V2. Three coordinated changes vs exp_018 (the 0.628 champion's rescue stage), each motivated by a documented finding. Same stage-1 source as exp_018 (exp_017 = pass-2 + original prompts) so this is a true single-variable test of the RESCUE stage. If exp_031 (FF-precision) board-wins separately, a follow-up will stack exp_031's stage-1 + this rescue config.",
+  "source_experiment": "exp_017_pass2_stage1",
+  "stage1_dataset_name": "exp-017-pass2-stage1-responses",
+  "rescue": {
+    "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-pass2",
+    "_change_1_note": "Swap rescuer strict70 (= exp_009 GRPO, first pass) -> pass-2 GRPO. exp_018 config explicitly deferred this: 'do it as exp_019 if exp_018 wins.' It won. pass-2 is the next-pass policy and should rescue MCQ at least as well.",
+    "max_tokens": 6144,
+    "_change_2_note": "Bump max_tokens 4096 -> 6144. Motivation: exp_014 finding that ALL 78 missing_boxed at 4096 are still truncated before reaching \\boxed{}. pass-2 chains are ~10% longer than strict70's, so this also covers the longer-output need from change 1.",
+    "scope": "mcq_only",
+    "_change_3_note": "Restrict rescue scope to MCQ missing_boxed only. Motivation: exp_014 finding that 'FF rescue is capability-limited, not budget-limited; all 329 wrong_math need a better stage-1, not a better rescuer.' Skipping FF rescue is free runtime (FF is the larger share of missing_boxed) and the longer-budget MCQ rescues then fit in roughly the same Kaggle slot.",
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "max_input_tokens_from_stage1": 3000
+  },
+  "vllm": {
+    "max_model_len": 12288,
+    "_max_model_len_note": "Bumped 8192 -> 12288 to fit max_tokens 6144 + max_input_tokens_from_stage1 3000 + slack. T4 x2 has 32GB VRAM; pass-2 weights ~8GB, KV cache for max_num_seqs=16 at 12288 fits comfortably.",
+    "max_num_seqs": 16,
+    "_max_num_seqs_note": "Dropped 24 -> 16 to absorb the larger per-seq KV cache at max_model_len=12288. MCQ-only filter cuts the case count by ~75% so this won't materially extend runtime.",
+    "max_num_batched_tokens": 12288,
+    "gpu_memory_utilization": 0.90,
+    "tensor_parallel_size": 2
+  },
+  "notes": "RESCUE-V2 single-variable-at-rescue test vs the 0.628 champion (exp_018). Three coordinated rescue changes: (1) rescuer strict70 -> pass-2; (2) max_tokens 4096 -> 6144 (+ max_model_len 8192 -> 12288 to fit); (3) scope = MCQ-only. Stage-1 source UNCHANGED (= exp_017 pass-2 + original prompts), so the only deltas vs exp_018 are inside `rescue` + `vllm`. Rescue prompts byte-identical. Expected board lift: +0.3-1.0pp. Pre-committed gate (vs 0.628): >=+0.5pp -> lock as new champion; -0.5 to +0.4pp -> no-loss-no-win, keep exp_018; <= -0.5pp -> diagnose locally per-bucket and back out most-likely culprit. REQUIRES rescue_notebook.ipynb to support the new `rescue.scope` flag — small notebook edit (~3-line filter) BEFORE first run; document under 'Implementation note' in notes.md."
+}
