@@ -70,18 +70,26 @@ Sequencing context (2026-05-24):
 
 ## Results
 
-_(to be filled after the rescue run + board submission)_
+**Important caveat: the MCQ-only scope filter did NOT execute on Kaggle.** Direct evidence: 66 FF responses were modified by rescue (would be 0 if the filter ran). Root cause: the Kaggle notebook running there is an older copy of `rescue_notebook.ipynb` — the scope-filter edit committed to main on 2026-05-24 never reached the Kaggle environment because the notebook file is uploaded/maintained separately from the `151b-experiments` dataset.
 
-| Metric | exp_018 (champion) | exp_033 |
-|---|---:|---:|
-| Stage-1 source | exp_017 | exp_017 (unchanged) |
-| Rescuer model | strict70 | pass-2 |
-| max_tokens | 4096 | 6144 |
-| Scope | all missing_boxed | MCQ only |
-| MCQ missing_boxed rescue rate | TBD (from rescue_stats.json) | TBD |
-| Local public.jsonl | 60.39% | TBD |
-| Kaggle board | **0.628** | TBD |
+**What actually ran:** pass-2 rescuer + max_tokens=6144 on **all** missing_boxed (both MCQ and FF), not the intended MCQ-only filter. So 2 of the 3 designed changes landed; the scope filter was inert.
+
+Despite this, the result is a clean improvement over exp_018:
+
+| Segment | exp_017 stage-1 | exp_018 (champion) | exp_033 (as-run) | Δ vs exp_018 |
+|---|---:|---:|---:|---:|
+| MCQ | 63.73% | 73.87% | **77.60%** | **+3.73pp** |
+| Free-form | 53.40% | 53.66% | 54.19% | +0.53pp |
+| Overall | 56.84% | 60.39% | **61.99%** | **+1.60pp** |
+
+**Reading:** MCQ rescue lifted +3.73pp, exactly the lever we predicted. FF rescue produced only +0.53pp despite better rescuer + more budget — confirming exp_014's "FF rescue is capability-limited" finding even on a stronger rescuer. The MCQ-only scope was an efficiency optimization, not a score lever, so its absence didn't cost score (it would have cut runtime but left score effectively unchanged).
+
+Responses changed by rescue: 143 / 1126 (77 MCQ + 66 FF).
 
 ## Conclusion
 
-_(to be filled)_
+Best local rescue result yet (+1.60pp over the 0.628 champion). Mechanism is consistent with the documented findings: pass-2 rescuer + longer budget unlocks meaningful MCQ recovery on top of pass-2 stage-1. Submit and board-test against the pre-committed gate.
+
+Projected board lift if rescue transfers at the historical ~50% rate (exp_018: +0.030 local stage-1 → +0.014 board): **~+0.8pp board → ~0.636**. Comfortably above the +0.005 promotion threshold if transfer holds.
+
+**Follow-up needed regardless of board result:** make sure the next rescue experiment uses the up-to-date `rescue_notebook.ipynb` (the version on main with the scope filter) — this run's scope-filter inertness was a stale-notebook issue, not a code bug. Logged as bug-112.
