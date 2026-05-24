@@ -49,16 +49,31 @@ MCQ is diagnostic-only (prompt byte-identical → sampling noise; do not gate on
 
 ## Results
 
-_(to be filled after the dev run)_
-
 | Segment | exp_017 pass-2 baseline | exp_031 (pass-2 + FF-precision) | Δ |
 |---|---:|---:|---:|
-| Free-form (100) | 53.00% | TBD | TBD |
-| MCQ (100) | 62.00% | TBD | TBD |
-| Overall (200) | 57.50% | TBD | TBD |
+| Free-form (100) | 53.00% | **56.00%** | **+3.0pp** |
+| MCQ (100) | 62.00% | 68.00% | +6.0pp (noise — MCQ prompt byte-identical) |
+| Overall (200) | 57.50% | 62.00% | +4.5pp |
 
-Per-case: any `\boxed{3, 7}` echo leaks? __ ; any `a/b` regurgitation? __ ; exact-fraction recoveries present? __
+Per-case:
+- `a/b` regurgitation: **0/100** ✓ (the exp_030 v3 fix held)
+- `\boxed{3, 7}` echo: **2/100** (id=217, id=1049) — both on already-wrong cases where the model bailed under uncertainty; symptomatic, not regression drivers
+- FF GAINED (6): id=32, 256, 321, 457, 951, 1096
+- FF LOST (3): id=97, 613, 1076 (id=97 = 302 vs gold 301, arithmetic miss not prompt-related; id=613/1076 last-box empty, likely truncation)
+- **Mechanism confirmed on 2 cases** that also recovered on pass-4 dev (id=32 `\dfrac{21275}{3}` matching gold 7091.666..., id=457 `85.94366927` ≈ gold 85.94366926...) — exact-fraction / high-precision recovery is real on pass-2 too, just rarer than on pass-4
 
 ## Conclusion
 
-_(to be filled)_
+**Ambiguous pass — weak signal.** FF +3pp lands in the gate's gap (I left +2-4pp unresolved). Real mechanism contribution is ~+2pp (the 2 verified per-case recoveries that match pass-4's pattern); the remaining ~+1pp is sampling drift from the prompt change.
+
+Why the lever is weaker on pass-2 than on pass-4 (dev +5pp → +3pp): pass-2 has different residuals — fewer questions are "fixable by exact-fraction" because pass-2's wrong_math bucket has more strict-precision failures and fewer trivial-rounding failures. The prompt is doing what it's supposed to, the addressable set is just smaller here.
+
+**Projected board lift: ~+0.5pp** (smaller than pass-4 dev would have projected; could be 0 within noise). Echo artifacts are minor (~2%) and don't regress correct cases.
+
+**Decision (2026-05-24): HOLD exp_031, prioritize exp_033 first.** Reasons:
+1. exp_033 (rescue retune) is the safer lift on the same stage-1 source (~+0.5pp expected, three changes each backed by a documented finding)
+2. exp_031 standalone is a marginal shot (~+0.5pp expected, weak signal). Spending a Kaggle slot on it now competes with exp_033.
+3. If exp_033 lands a new champion, the compound bet (exp_034 = exp_031 stage-1 + exp_033 rescue) becomes the next experiment, capturing exp_031's contribution.
+4. If exp_033 ties or regresses, revisit exp_031 as a standalone follow-on (1 slot).
+
+Either way exp_031 is not discarded — it's deferred behind the safer move.
