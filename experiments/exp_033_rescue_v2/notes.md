@@ -93,3 +93,15 @@ Best local rescue result yet (+1.60pp over the 0.628 champion). Mechanism is con
 Projected board lift if rescue transfers at the historical ~50% rate (exp_018: +0.030 local stage-1 → +0.014 board): **~+0.8pp board → ~0.636**. Comfortably above the +0.005 promotion threshold if transfer holds.
 
 **Follow-up needed regardless of board result:** make sure the next rescue experiment uses the up-to-date `rescue_notebook.ipynb` (the version on main with the scope filter) — this run's scope-filter inertness was a stale-notebook issue, not a code bug. Logged as bug-112.
+
+## Board result (2026-05-25 00:06 UTC)
+
+**Board: 0.625** (−0.003 vs the 0.628 champion). Lands in the **tie/noise band** of the pre-committed gate (±0.005 of 0.628 = 0.623–0.633). exp_018 stays as champion.
+
+| Local Δ vs exp_018 | Board Δ vs exp_018 | Transfer |
+|---:|---:|---:|
+| +1.60pp | −0.30pp | inverted |
+
+Another lossy local→board transfer in the GRPO-flavored direction (see [[project_grpo_local_no_transfer]]). The MCQ +3.73pp local was driven by the pass-2 GRPO model acting as rescuer — and pass-2 GRPO has shown the same overfit-to-public-MCQ pattern at the stage-1 level (pass-3 +1.77pp local → 0pp board; pass-5 +1.68pp local → −1.4pp board). The pattern now appears to be GRPO-model-as-source rather than GRPO-model-as-stage-1 — wherever the pass-N model touches MCQ output, local lifts inflate vs the board.
+
+**Strategic takeaway:** the rescue stack appears saturated on the board. exp_018's 0.628 is likely the *rescue-stage* ceiling for this stage-1 base. Future board gains must come from stage-1 capability levers (extended thinking budget, FF-precision prompts, SFT v2) or from a fundamentally different rescuer mechanism (not GRPO-flavored).
