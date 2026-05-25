@@ -8,12 +8,13 @@
   "data": {
     "ff_source": "AI-MO/NuminaMath-CoT",
     "ff_n": 5000,
-    "mcq_source": "allenai/math_qa",
+    "mcq_source": "deepmind/aqua_rat",
     "mcq_n": 2000,
     "probe_n": 500,
     "seed": 42,
     "max_seq_len": 2048,
-    "_format_note": "Both sources wrapped as <think>{rationale}</think>\\n\\n\\boxed{{answer}}. MathQA's correct_option index -> letter (a..e); kept lowercase since MathQA convention. Free-form answers kept verbatim from NuminaMath's 'answer' field. Examples whose wrapped length > max_seq_len are dropped during prep."
+    "_mcq_source_note": "Swapped from allenai/math_qa (2026-05-24): math_qa ships a loading script, which the current `datasets` lib refuses. aqua_rat is natively parquet, 97k rows, same domain (MathQA is derived from AQuA-RAT). Schema: question, options=['A)text',...], rationale, correct (A..E).",
+    "_format_note": "Both sources wrapped as <think>{rationale}</think>\\n\\n\\boxed{{answer}}. aqua_rat's `correct` is already an uppercase letter A..E. Free-form answers kept verbatim from NuminaMath's last \\boxed{} in solution. Examples whose wrapped length > max_seq_len are dropped during prep."
   },
 
   "lora": {

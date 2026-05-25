@@ -1,19 +1,26 @@
 """
 exp_034 — SFT v2 data prep.
 
-Pulls NuminaMath-CoT (FF) + MathQA (MCQ) from HF Hub, wraps both into a unified
-chat-format JSONL that train_sft.py consumes. Probe split is the first N
-examples of the shuffled train mix, so resuming from the probe adapter
-continues training naturally without re-processing.
+Pulls NuminaMath-CoT (FF) + AQuA-RAT (MCQ) from HF Hub, wraps both into TRL
+0.21's conversational prompt-completion format that train_sft.py consumes.
+Probe split is the first N examples of the shuffled train mix, so resuming
+from the probe adapter continues training naturally without re-processing.
+
+MCQ source = `deepmind/aqua_rat` (swapped from `allenai/math_qa` on 2026-05-24:
+math_qa ships a loading script, which the current `datasets` lib refuses;
+aqua_rat is natively parquet, ~97k rows, same domain — MathQA was derived
+from AQuA-RAT).
 
 Output:
   /tmp/sft_data/train.jsonl   ~7000 examples (5000 FF + 2000 MCQ, shuffled)
   /tmp/sft_data/probe.jsonl   first 500 lines of train.jsonl (subset)
 
-Each line:
-  {"messages": [{"role": "user", "content": ...},
-                {"role": "assistant", "content": "<think>{rationale}</think>\n\n\\boxed{answer}"}],
-   "source": "numina" | "mathqa"}
+Each line (TRL conversational prompt-completion format):
+  {"prompt": [{"role": "system", "content": ...},
+              {"role": "user",   "content": ...}],
+   "completion": [{"role": "assistant",
+                   "content": "<think>{rationale}</think>\n\n\\boxed{answer}"}],
+   "source": "numina" | "aqua"}
 """
 
 import argparse
@@ -109,20 +116,27 @@ def prep_numina(n: int, seed: int, max_seq_len: int) -> list[dict]:
     return out
 
 
-_OPT_RE = re.compile(r"\s*([a-e])\s*\)\s*(.*?)(?=\s*,\s*[a-e]\s*\)|$)", re.IGNORECASE | re.DOTALL)
+_AQUA_OPT_RE = re.compile(r"^\s*([A-E])\s*\)\s*(.*)$", re.DOTALL)
 
 
-def _parse_mathqa_options(options_str: str) -> list[tuple[str, str]]:
-    """MathQA 'options' field is 'a ) 1.20 % , b ) 1.30 % , c ) 1.40 % , d ) 1.50 % , e ) 1.60 %'.
-    Returns list of (letter_lower, text). Letters are guaranteed to be a..e.
+def _parse_aqua_option(opt: str) -> tuple[str, str] | None:
+    """AQuA-RAT options are list entries like 'A)21' or 'B) 1.30 %'.
+    Returns (uppercase_letter, text) or None if it doesn't match.
     """
-    return [(m.group(1).lower(), m.group(2).strip().rstrip(","))
-            for m in _OPT_RE.finditer(options_str or "")]
+    m = _AQUA_OPT_RE.match(opt or "")
+    if not m:
+        return None
+    return m.group(1).upper(), m.group(2).strip()
 
 
-def prep_mathqa(n: int, seed: int, max_seq_len: int) -> list[dict]:
-    print(f"[mathqa] loading allenai/math_qa (streaming), target n={n}")
-    ds = load_dataset("allenai/math_qa", split="train", streaming=True, trust_remote_code=True)
+def prep_aqua(n: int, seed: int, max_seq_len: int) -> list[dict]:
+    """AQuA-RAT (deepmind/aqua_rat) replaces allenai/math_qa.
+    Swapped 2026-05-24: math_qa ships a loading script, current `datasets` refuses.
+    AQuA-RAT is natively parquet, 97k train rows, same domain (MathQA is derived
+    from AQuA-RAT). Schema: question, options=list[str], rationale, correct (A..E).
+    """
+    print(f"[aqua] loading deepmind/aqua_rat raw/train (streaming), target n={n}")
+    ds = load_dataset("deepmind/aqua_rat", "raw", split="train", streaming=True)
     ds = ds.shuffle(seed=seed + 1, buffer_size=10000)
 
     out: list[dict] = []
@@ -132,28 +146,25 @@ def prep_mathqa(n: int, seed: int, max_seq_len: int) -> list[dict]:
     for ex in ds:
         seen += 1
         if seen % 2000 == 0:
-            print(f"[mathqa] scanned {seen}, kept {len(out)}")
-        problem = (ex.get("Problem") or "").strip()
-        options_str = (ex.get("options") or "").strip()
-        rationale = (ex.get("Rationale") or "").strip()
-        correct = (ex.get("correct") or "").strip().lower()
-        if not problem or not options_str or not rationale or correct not in "abcde":
+            print(f"[aqua] scanned {seen}, kept {len(out)}")
+        problem = (ex.get("question") or "").strip()
+        options = ex.get("options") or []
+        rationale = (ex.get("rationale") or "").strip()
+        correct = (ex.get("correct") or "").strip().upper()
+        if not problem or not options or not rationale or correct not in "ABCDE":
             skipped_parse += 1
             continue
-        opts = _parse_mathqa_options(options_str)
-        if len(opts) < 2:
+        parsed = [_parse_aqua_option(o) for o in options]
+        if any(p is None for p in parsed) or len(parsed) < 2:
             skipped_parse += 1
             continue
-        # Map to A..E uppercase in the user-facing question (matches competition MCQ style),
-        # but MathQA's 'correct' is lowercase a..e. Keep the answer letter as the lowercase
-        # letter from MathQA — the inference rubric is case-insensitive for the letter.
+
         user_msg_parts = [problem, "", "Options:"]
-        for letter, text in opts:
-            user_msg_parts.append(f"{letter.upper()}. {text}")
+        for letter, text in parsed:
+            user_msg_parts.append(f"{letter}. {text}")
         user_msg = "\n".join(user_msg_parts)
-        # Answer letter: use uppercase to match the competition format extracted by judger
-        answer_letter = correct.upper()
-        assistant = f"<think>{rationale}</think>\n\n\\boxed{{{answer_letter}}}"
+
+        assistant = f"<think>{rationale}</think>\n\n\\boxed{{{correct}}}"
         approx_tokens = (len(SYSTEM_PROMPT_MCQ) + len(user_msg) + len(assistant)) // 4
         if approx_tokens > max_seq_len:
             skipped_too_long += 1
@@ -165,12 +176,12 @@ def prep_mathqa(n: int, seed: int, max_seq_len: int) -> list[dict]:
                 {"role": "user", "content": user_msg},
             ],
             "completion": [{"role": "assistant", "content": assistant}],
-            "source": "mathqa",
+            "source": "aqua",
         })
         if len(out) >= n:
             break
 
-    print(f"[mathqa] kept {len(out)} / scanned {seen} "
+    print(f"[aqua] kept {len(out)} / scanned {seen} "
           f"(skipped parse={skipped_parse}, too_long={skipped_too_long})")
     return out
 
@@ -192,12 +203,12 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     numina = prep_numina(ff_n, seed, max_seq_len)
-    mathqa = prep_mathqa(mcq_n, seed, max_seq_len)
+    aqua = prep_aqua(mcq_n, seed, max_seq_len)
 
-    all_examples = numina + mathqa
+    all_examples = numina + aqua
     rng = random.Random(seed)
     rng.shuffle(all_examples)
-    print(f"[mix] total={len(all_examples)} (numina={len(numina)}, mathqa={len(mathqa)})")
+    print(f"[mix] total={len(all_examples)} (numina={len(numina)}, aqua={len(aqua)})")
 
     train_path = out_dir / "train.jsonl"
     with train_path.open("w") as f:
@@ -212,7 +223,7 @@ def main():
             f.write(json.dumps(ex, ensure_ascii=False) + "\n")
     print(f"[write] {probe_path}  ({len(probe)} lines, source mix:"
           f" numina={sum(1 for e in probe if e['source']=='numina')},"
-          f" mathqa={sum(1 for e in probe if e['source']=='mathqa')})")
+          f" aqua={sum(1 for e in probe if e['source']=='aqua')})")
 
 
 if __name__ == "__main__":
