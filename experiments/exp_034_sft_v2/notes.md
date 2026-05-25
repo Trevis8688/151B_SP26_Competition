@@ -48,6 +48,13 @@ Phase C: full (~6-8h, conditional)
   - HFPushAdapterCallback every 50 steps -> resume across 12h pod boundary
 ```
 
+**Probe eval engine + budget (advisor-corrected):** the gate uses HF `generate`
+at **batch=8, max_new_tokens=4096** — NOT batch=16/8192. KV-cache math: Qwen3-4B
+fp16 ≈ 147KB/token, so 16×8192 ≈ 19GB KV + 8GB weights ≈ 27GB would OOM the 24GB
+A5000. batch=8 @ ~5k tokens ≈ 6GB KV + 8GB = ~14GB, safe. 4096 gen tokens is
+ample for a forgetting/format gate (answers reach `\boxed{}` well before then).
+Probe eval ≈ ~1h at this setting.
+
 ### 2. Data spec — decided in plan, not deferred
 
 | Field | Value | Notes |
@@ -107,6 +114,28 @@ If probe + full + dev + stage-1 board isn't done by **2026-05-27 (day 3)**, aban
 | `notes.md` | This file |
 
 Launch script: `scripts/launch_sft_v2.sh` (sibling, not in this dir).
+
+## Pre-launch verification (do NOT skip — ~15 min saves a ~3h bad bet)
+
+The launch script bakes in two fast fail-fast checks (TRL SFT API import +
+SFTConfig kwargs, run in the sanity block before any training). Residual risks
+to verify with a tiny dry run before trusting the full pipeline:
+
+1. **TRL 0.21 completion-only masking.** `DataCollatorForCompletionOnlyLM` +
+   `formatting_func` should mask the prompt and compute loss only on the
+   assistant turn (`<|im_start|>assistant\n` response template). Verify once:
+   print the first batch's `labels` and confirm prompt tokens are `-100` and only
+   the assistant content (including `</think>`) carries loss. If TRL 0.21 ignores
+   `max_seq_length` under `formatting_func`, truncation may not apply — check the
+   token lengths in the first batch.
+2. **HF-generate OOM.** Even at batch=8/4096 do a 10-q dry run of `eval_dev.py`
+   first; confirm no CUDA OOM before the real 200-q gate.
+3. **MathQA format mismatch (advisor note).** MathQA is 5-option lowercase
+   `a)..e)` with sometimes-thin `Rationale`; competition MCQ is up to 10 options
+   `A..J`. `prepare_data.py` maps to uppercase `A..E` + `Options:` block, which is
+   close but not identical. If MCQ regresses at the probe gate, look here first —
+   the SFT MCQ signal is gradient (not a memorized template) so it should
+   generalize, but the style gap is the most likely culprit.
 
 ## Launch sequence
 

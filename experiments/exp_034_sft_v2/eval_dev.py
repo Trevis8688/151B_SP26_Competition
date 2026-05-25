@@ -33,7 +33,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOXED_RE = re.compile(r"\\boxed\{([^}]*)\}")
-BATCH_SIZE = 16
+# A5000 (24GB) KV-cache budget: Qwen3-4B fp16 ~147KB/token. batch=8 @ ~5k tokens
+# (~1k prompt + 4k gen) ≈ 6GB KV + 8GB weights = ~14GB. batch=16 @ 8192 gen would
+# be ~27GB and OOM. Keep batch modest; this is a probe gate, not a throughput run.
+BATCH_SIZE = 8
 
 
 def _load_prompts(prompts_path: Path):
@@ -67,7 +70,9 @@ def main():
     ap.add_argument("--prompts", default=str(REPO_ROOT / "experiments/exp_017_pass2_stage1/prompts.py"))
     ap.add_argument("--judger_dir", default=str(REPO_ROOT))
     ap.add_argument("--out", default=str(Path(__file__).parent / "dev_probe_responses.jsonl"))
-    ap.add_argument("--max_new_tokens", type=int, default=8192)
+    # 4096 (not the 8192 inference budget): probe gate detects forgetting + gross
+    # format breakage, where 4096 is ample. Keeps KV cache in A5000 budget at batch=8.
+    ap.add_argument("--max_new_tokens", type=int, default=4096)
     args = ap.parse_args()
 
     cfg = json.loads(Path(args.config).read_text())
