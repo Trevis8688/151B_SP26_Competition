@@ -77,3 +77,43 @@ Why the lever is weaker on pass-2 than on pass-4 (dev +5pp → +3pp): pass-2 has
 4. If exp_033 ties or regresses, revisit exp_031 as a standalone follow-on (1 slot).
 
 Either way exp_031 is not discarded — it's deferred behind the safer move.
+
+## Promotion to full run (2026-05-24)
+
+exp_033 board landed at **0.625** = tie/noise band vs 0.628 champion. The rescue stack appears saturated on the board (see [[project_grpo_local_no_transfer]] — GRPO-as-rescuer extends the local-inflated-board-flat pattern). Per the deferred plan above, exp_031 is now activated as the standalone follow-on.
+
+**What changes:** `config.json` `split` is already `"full"`; the `notes` field is updated to describe the full-run intent. Nothing else changes — `prompts.py` is byte-identical, model/sampling/vLLM all unchanged from the dev probe.
+
+### Full-run plan
+
+1. Refresh the `151b-experiments` Kaggle dataset version (bug-111 — never skip after a git push).
+2. Kaggle `cse151b-notebook.ipynb`: `EXPERIMENT = "exp_031_ff_precision_pass2"` → attach utils dataset → confirm "loaded 1126 questions" → Save & Run All (T4×2, ~80 min for full split).
+3. Download `public_responses.jsonl` + `private_responses.jsonl` + `submission.csv` (raw stage-1 = the board discriminator).
+4. Score `public_responses.jsonl` locally → fill in the "Full results" section below.
+5. Submit stage-1 raw to Kaggle as the discriminator. **The board reference is exp_017's 0.586 stage-1, not 0.628 champion** — raw stage-1 cannot beat the full-stack champion, so this submission tests whether FF-precision LIFTS pass-2 stage-1 on the board.
+6. Branch on board result (see gate below).
+
+### Pre-committed gate (full-run, board)
+
+The board reference for this submission is **exp_017's 0.586 stage-1** (raw pass-2, no rescue, original prompts). Board 1σ ≈ 2.3pp on the ~470-q split.
+
+| Board result vs 0.586 | Interpretation | Action |
+|---|---|---|
+| **≥ +0.010 (≈ 0.596+)** | FF-precision ports to pass-2 stage-1 on the board | **Promote to exp_034:** layer exp_018 rescue config (strict70, max_tokens=4096, scope=all) on these responses; expected full-stack board ~0.633+ if rescue lift carries. |
+| **+0.000 to +0.009** | Stage-1 lift ambiguous (consistent with the dev's +3pp soft signal) | **Conditional:** if Kaggle slots permit before deadline, still run exp_034 (rescue layer is cheap, ~20 min Kaggle slot) since rescue can rescue residuals the FF-precision prompt didn't fix; otherwise lock exp_018 (0.628). |
+| **≤ −0.001** | FF-precision regresses pass-2 stage-1 on the board (local↔board inversion again, see [[project_grpo_local_no_transfer]]) | **STOP.** Lock exp_018 (0.628) as final. Do NOT layer rescue — a regressed stage-1 + saturated rescue is highly likely to underperform 0.628. |
+
+### Full results (fill in after Kaggle run)
+
+| Segment | exp_017 full (pass-2, orig prompts) | exp_031 full (pass-2, FF-precision) | Δ |
+|---|---:|---:|---:|
+| MCQ (375) | 63.73% | tbd | tbd |
+| Free-form (751) | 53.40% | tbd | tbd |
+| Overall (1126) | 56.84% | tbd | tbd |
+| **Board (private 943)** | **0.586** | **tbd** | **tbd** |
+
+### Notes for the run
+- Same Kaggle notebook flow as exp_017 — no special handling needed.
+- The dev probe ran on the SAME notebook and prompt; confidence is high that this will execute cleanly.
+- Watch for the diagnostic tell: "loaded 1126 questions" (not 200) — confirms the dataset refresh + split=full landed.
+- Stage-1 board submission message suggestion: `"exp_031 stage-1: pass-2 + FF-precision prompt (full, raw)"`.

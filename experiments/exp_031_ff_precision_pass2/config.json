@@ -5,12 +5,12 @@
   "top_p": 0.95,
   "top_k": 20,
   "num_samples": 1,
-  "split": "dev",
+  "split": "full",
   "vllm": {
     "max_model_len": 10240,
     "max_num_seqs": 32,
     "max_num_batched_tokens": 20480,
     "gpu_memory_utilization": 0.90
   },
-  "notes": "DEV-ONLY probe: port the validated FF-precision prompt (exp_030, dev +5pp FF on pass-4) onto the PASS-2 base (TrevorDuong/qwen3-4b-thinking-grpo-pass2) — the 0.628 champion's base. GRPO scaling is exhausted (exp_029 pass-5 regressed to 0.586 board), so pass-2 + FF-precision + exp_014 rescue is the only live lever. Single variable vs exp_017 (pass-2 stage-1, original prompts): the FF-precision SYSTEM_PROMPT_MATH (byte-identical to exp_030). MCQ prompt, few-shots, sampling, vLLM sizing all identical. Goal: confirm the +5pp FF lift PORTS to pass-2 before spending a board slot. If yes -> full public+private on pass-2 + this prompt + exp_014 rescue stack = exp_018 config except the prompt -> board vs 0.628."
+  "notes": "FULL public+private stage-1 board run. Dev probe (n=200, see notes.md results) gave FF +3pp / 0 a/b echoes / 2 verified per-case exact-fraction recoveries — ambiguous-pass signal, mechanism present but smaller addressable set on pass-2 than pass-4. Single variable vs exp_017 (pass-2 stage-1, original prompts): the FF-precision SYSTEM_PROMPT_MATH (byte-identical to exp_030). MCQ prompt, few-shots, sampling, vLLM sizing all identical. Submit stage-1 raw to board as discriminator vs exp_017's 0.586 stage-1 floor; if board shows lift, follow-up = layer exp_018 rescue config on these responses (exp_034) for head-to-head vs the 0.628 champion. Why pass-2 not pass-4 (exp_025): rescue is non-additive — pass-4 full-stack (0.621) is below pass-2 full-stack (0.628) because rescue is tuned to pass-2's residuals, so the champion's base must stay pass-2."
 }
