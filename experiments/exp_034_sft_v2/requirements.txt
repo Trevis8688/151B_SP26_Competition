@@ -1,0 +1,28 @@
+# exp_034 SFT v2 deps on top of scipy-ml-notebook:stable.
+# Single venv: training (trl SFT) AND the dev-probe eval (HF generate) both run
+# here — eval_dev.py deliberately avoids vLLM so there's no second venv on the
+# safety-critical gate path. torch 2.5.1 stack matches exp_009/exp_026 known-good.
+
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+bitsandbytes>=0.46.1
+trl==0.21.0
+peft
+accelerate
+# Qwen3 needs transformers>=4.51 (scipy-ml ships 4.44 which fails to load the
+# Qwen3 tokenizer — CLAUDE.md DSMLP pitfall #6). numpy<2 pin prevents the
+# transitive upgrade that re-breaks scipy/sklearn (pitfall #2).
+# NOTE: no shell quotes here — requirements.txt reads the literal line.
+numpy<2
+transformers>=4.51,<5
+tokenizers>=0.21
+datasets
+
+huggingface_hub
+
+# Judger deps for the dev-probe free-form scoring
+sympy
+antlr4-python3-runtime==4.11

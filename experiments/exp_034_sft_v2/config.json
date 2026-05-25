@@ -1,0 +1,63 @@
+{
+  "_comment": "exp_034 — SFT v2 hail mary. Documented 'if GRPO stalls' lever; GRPO stalled (exp_029 pass-5 regressed to 0.586). Fixes exp_008's two root causes: (a) base = qwen3-4b-thinking-grpo-pass2 (Thinking-family, NOT non-thinking Qwen3-4B); (b) data includes BOTH free-form (NuminaMath-CoT 5k) AND MCQ (MathQA 2k), wrapped programmatically as <think>{rationale}</think>\\n\\n\\boxed{answer}. Two-phase train: probe@500ex (~1h) -> dev-probe gate -> full@7000ex (~6-8h). Gate prevents exp_008-style 2-day loss. HFPushAdapterCallback every save_steps so 12h DSMLP ceiling can resume in a second pod.",
+
+  "base_model_id": "TrevorDuong/qwen3-4b-thinking-grpo-pass2",
+  "output_adapter_repo": "TrevorDuong/qwen3-4b-pass2-sft-v2",
+  "output_merged_repo": "TrevorDuong/qwen3-4b-pass2-sft-v2-merged",
+
+  "data": {
+    "ff_source": "AI-MO/NuminaMath-CoT",
+    "ff_n": 5000,
+    "mcq_source": "allenai/math_qa",
+    "mcq_n": 2000,
+    "probe_n": 500,
+    "seed": 42,
+    "max_seq_len": 2048,
+    "_format_note": "Both sources wrapped as <think>{rationale}</think>\\n\\n\\boxed{{answer}}. MathQA's correct_option index -> letter (a..e); kept lowercase since MathQA convention. Free-form answers kept verbatim from NuminaMath's 'answer' field. Examples whose wrapped length > max_seq_len are dropped during prep."
+  },
+
+  "lora": {
+    "r": 16,
+    "alpha": 32,
+    "dropout": 0.0,
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "_dropout_note": "dropout=0 per feedback_grpo_gotchas memory — non-zero LoRA dropout causes silent training failures with TRL/PEFT."
+  },
+
+  "train": {
+    "learning_rate": 2.0e-5,
+    "lr_scheduler_type": "cosine",
+    "warmup_ratio": 0.03,
+    "weight_decay": 0.0,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 16,
+    "num_train_epochs": 1,
+    "max_grad_norm": 1.0,
+    "save_steps": 50,
+    "logging_steps": 5,
+    "bf16": false,
+    "fp16": true,
+    "_dtype_note": "fp16 not bf16 — DSMLP A5000 supports bf16 but we want byte-compat with Kaggle T4 inference where the merged model will run."
+  },
+
+  "probe_gate": {
+    "_comment": "Pre-committed gate after probe@500ex. If ANY threshold fails, abort the full train. Catches exp_008's MCQ catastrophic forgetting in ~3h instead of ~2 days.",
+    "mcq_dev_min_pct": 60.0,
+    "_mcq_note": "pass-2 dev MCQ baseline = 62.00% (exp_017 dev_subset). >5pp drop = MCQ forgetting starting; abort.",
+    "boxed_extraction_min_pct": 95.0,
+    "_extract_note": "SFT can silently wash out the boxed{} format adherence that GRPO baked in. <95% extraction = format degradation; abort.",
+    "ff_dev_min_pct": 53.0,
+    "_ff_note": "pass-2 dev FF baseline = 53.00%. Below baseline = SFT is hurting what we're trying to improve; abort."
+  },
+
+  "final_gate": {
+    "_comment": "Pre-committed gate after full training, on dev (200q) then board. Both must pass to layer rescue.",
+    "dev_mcq_min_pct": 60.0,
+    "dev_ff_min_pct": 55.0,
+    "_dev_note": "Probe gate enforces ≥53 FF / ≥60 MCQ; for FULL to be worth submitting, FF needs to exceed +2pp (55%+) since the cost of a board slot is non-trivial.",
+    "board_stage1_floor": 0.586,
+    "_board_note": "exp_017 stage-1 raw = 0.586. Stage-1 board >= +0.010 (≈0.596+) -> promote to rescue layer. <0 -> discard.",
+    "abandon_deadline_days_from_2026_05_24": 3,
+    "_deadline_note": "If probe + full + dev + board isn't done by day 3 (2026-05-27), abandon SFT v2 and lock exp_018 (0.628) as final — leaves 3 safe days."
+  }
+}
