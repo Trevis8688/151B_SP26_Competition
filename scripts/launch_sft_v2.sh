@@ -63,7 +63,7 @@ K8S_TIMEOUT_SECONDS=43200 launch.sh \
     # them here would just fail under set -e and kill the pod.
     echo '--- env sanity ---'
     python -c \"import torch, trl, peft, bitsandbytes, transformers, datasets; print(f'torch={torch.__version__} trl={trl.__version__} peft={peft.__version__} transformers={transformers.__version__}')\"
-    python -c \"from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM; SFTConfig(output_dir='/tmp/_cfgcheck', max_seq_length=2048); print('TRL SFT API OK')\"
+    python -c \"from trl import SFTConfig, SFTTrainer; SFTConfig(output_dir='/tmp/_cfgcheck', max_length=2048, completion_only_loss=True); print('TRL SFT API OK')\"
     python -c \"import torch; assert torch.cuda.is_available(); print(f'CUDA OK: {torch.cuda.get_device_name(0)}')\"
     python -c \"import transformers; assert tuple(int(x) for x in transformers.__version__.split('.')[:2]) >= (4,51), 'need transformers>=4.51 for Qwen3'\"
 

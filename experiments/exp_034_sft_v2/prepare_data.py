@@ -17,6 +17,7 @@ Each line:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import random
@@ -27,6 +28,18 @@ from datasets import load_dataset
 
 
 BOXED_RE = re.compile(r"\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}")
+
+# System prompts come from exp_017 so SFT examples match the inference prompt
+# format the model will see at test time (in-distribution). Few-shots are NOT
+# included per-example (they'd bloat every sequence); the system prompt is the
+# load-bearing part for format matching.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_P_SPEC = importlib.util.spec_from_file_location(
+    "exp017_prompts", str(_REPO_ROOT / "experiments/exp_017_pass2_stage1/prompts.py"))
+_P = importlib.util.module_from_spec(_P_SPEC)
+_P_SPEC.loader.exec_module(_P)
+SYSTEM_PROMPT_MATH = _P.SYSTEM_PROMPT_MATH
+SYSTEM_PROMPT_MCQ = _P.SYSTEM_PROMPT_MCQ
 
 
 def _extract_last_boxed(text: str) -> str | None:
@@ -75,16 +88,17 @@ def prep_numina(n: int, seed: int, max_seq_len: int) -> list[dict]:
             continue
 
         assistant = f"<think>{rationale}</think>\n\n\\boxed{{{answer}}}"
-        approx_tokens = (len(problem) + len(assistant)) // 4  # cheap upper bound
+        approx_tokens = (len(SYSTEM_PROMPT_MATH) + len(problem) + len(assistant)) // 4
         if approx_tokens > max_seq_len:
             skipped_too_long += 1
             continue
 
         out.append({
-            "messages": [
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT_MATH},
                 {"role": "user", "content": problem},
-                {"role": "assistant", "content": assistant},
             ],
+            "completion": [{"role": "assistant", "content": assistant}],
             "source": "numina",
         })
         if len(out) >= n:
@@ -140,16 +154,17 @@ def prep_mathqa(n: int, seed: int, max_seq_len: int) -> list[dict]:
         # Answer letter: use uppercase to match the competition format extracted by judger
         answer_letter = correct.upper()
         assistant = f"<think>{rationale}</think>\n\n\\boxed{{{answer_letter}}}"
-        approx_tokens = (len(user_msg) + len(assistant)) // 4
+        approx_tokens = (len(SYSTEM_PROMPT_MCQ) + len(user_msg) + len(assistant)) // 4
         if approx_tokens > max_seq_len:
             skipped_too_long += 1
             continue
 
         out.append({
-            "messages": [
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT_MCQ},
                 {"role": "user", "content": user_msg},
-                {"role": "assistant", "content": assistant},
             ],
+            "completion": [{"role": "assistant", "content": assistant}],
             "source": "mathqa",
         })
         if len(out) >= n:

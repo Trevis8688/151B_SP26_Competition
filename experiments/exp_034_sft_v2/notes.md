@@ -159,6 +159,28 @@ kubectl logs -f <pod_name>
 bash scripts/launch_sft_v2.sh
 ```
 
+## TRL 0.21.0 SFT API (verified against v0.21.0 source, 2026-05-24)
+
+First launch died at the sanity check (the fail-fast worked as designed) on
+`ImportError: cannot import name 'DataCollatorForCompletionOnlyLM' from 'trl'`.
+That collator was removed from TRL's top-level export by 0.21. Verified the
+correct API against `trl/trainer/sft_config.py` + `sft_trainer.py` @ v0.21.0:
+
+- **No `DataCollatorForCompletionOnlyLM`, no `formatting_func`.** SFTTrainer
+  handles dataset formats natively in `_prepare_dataset`.
+- **Field is `max_length`, not `max_seq_length`** (renamed; the old name errors).
+- **Use conversational prompt-completion format:** each row = `prompt` (list of
+  system+user message dicts) + `completion` (list with the assistant dict). When
+  a `prompt` column is present, `completion_only_loss` auto-enables and the prompt
+  is masked by *prefix length* (line ~774) — no `{% generation %}` chat-template
+  tags needed, so this is robust regardless of Qwen3's template internals.
+- Container resolved: `trl=0.21.0 peft=0.19.1 transformers=4.57.6 torch=2.5.1`.
+
+Data format changed accordingly: `prepare_data.py` now emits
+`{"prompt": [system,user], "completion": [assistant]}` (was `{"messages": [...]}`)
+and prepends the exp_017 system prompt so SFT examples match the inference prompt
+format (few-shots omitted per-example to keep sequences short).
+
 ## Results (fill in after each phase)
 
 ### Phase A — probe (after ~1h)

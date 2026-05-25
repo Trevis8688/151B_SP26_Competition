@@ -30,7 +30,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainerCallback,
 )
-from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
+from trl import SFTConfig, SFTTrainer
 
 
 # ============================================================
@@ -100,28 +100,15 @@ model.config.use_cache = False  # required for gradient checkpointing
 # ============================================================
 print(f"[data] load {DATA_FILE}")
 ds = load_dataset("json", data_files=str(DATA_FILE), split="train")
-print(f"[data] {len(ds)} examples")
-
-
-def format_for_chat(example):
-    """Render messages through the tokenizer's chat template. Returns the full
-    prompt+response text; the completion-only collator masks loss on everything
-    before the response template."""
-    return tokenizer.apply_chat_template(
-        example["messages"],
-        tokenize=False,
-        add_generation_prompt=False,
-    )
-
-
-# Qwen3 chat template starts the assistant turn with `<|im_start|>assistant\n`.
-# DataCollatorForCompletionOnlyLM masks all tokens up to and including this template,
-# so the loss is computed only on the assistant content (including the </think> wrapper).
-RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
-collator = DataCollatorForCompletionOnlyLM(
-    response_template=RESPONSE_TEMPLATE,
-    tokenizer=tokenizer,
-)
+if "source" in ds.column_names:
+    ds = ds.remove_columns(["source"])  # keep only prompt/completion for SFTTrainer
+print(f"[data] {len(ds)} examples; columns={ds.column_names}")
+# Dataset is CONVERSATIONAL PROMPT-COMPLETION: each row has `prompt` (list of
+# system+user messages) and `completion` (list with the assistant message).
+# TRL 0.21 SFTTrainer applies the chat template itself, and because a `prompt`
+# column is present it auto-enables completion_only_loss — the prompt tokens are
+# masked by prefix length (no DataCollatorForCompletionOnlyLM, no {% generation %}
+# template tags required). See trl/trainer/sft_trainer.py v0.21.0 _prepare_dataset.
 
 
 # ============================================================
@@ -131,7 +118,9 @@ collator = DataCollatorForCompletionOnlyLM(
 probe_max_steps = max(1, DATA["probe_n"] // (TRAIN["per_device_train_batch_size"]
                                               * TRAIN["gradient_accumulation_steps"]))
 max_steps = probe_max_steps if args.phase == "probe" else -1
-num_train_epochs = 0 if args.phase == "probe" else TRAIN["num_train_epochs"]
+# When max_steps > 0 (probe), HF Trainer uses it and ignores num_train_epochs;
+# keep epochs=1 so the value is valid either way.
+num_train_epochs = 1 if args.phase == "probe" else TRAIN["num_train_epochs"]
 
 sft_args = SFTConfig(
     output_dir=str(CKPT_DIR),
@@ -150,11 +139,12 @@ sft_args = SFTConfig(
     bf16=TRAIN["bf16"],
     fp16=TRAIN["fp16"],
     gradient_checkpointing=True,
+    gradient_checkpointing_kwargs={"use_reentrant": False},
     optim="paged_adamw_8bit",
-    max_seq_length=DATA["max_seq_len"],
+    max_length=DATA["max_seq_len"],
+    completion_only_loss=True,
     packing=False,
     report_to="none",
-    remove_unused_columns=False,
 )
 
 lora_cfg = LoraConfig(
@@ -309,8 +299,6 @@ trainer = SFTTrainer(
     args=sft_args,
     train_dataset=ds,
     processing_class=tokenizer,
-    formatting_func=format_for_chat,
-    data_collator=collator,
     peft_config=trainer_peft_config,
     callbacks=callbacks,
 )
