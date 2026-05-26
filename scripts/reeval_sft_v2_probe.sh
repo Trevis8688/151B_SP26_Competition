@@ -25,7 +25,11 @@ CKPT_SUBDIR="checkpoint-final"
 
 echo "Re-evaluating SFT v2 probe gate on $GPU ..."
 
-K8S_TIMEOUT_SECONDS=7200 launch.sh \
+# K8S_TIMEOUT_SECONDS=21600 (6h). First attempt used 7200 (2h) "just for eval" but
+# HF generate on a 4B model with max_new_tokens=4096 over 200q runs ~6h on A5000.
+# The 2h ceiling SIGKILLed the pod at q ~112/200 — no traceback, no kubectl event,
+# just Error status. Bump to 6h cap, which is well over expected wallclock.
+K8S_TIMEOUT_SECONDS=21600 launch.sh \
   -g 1 -v "$GPU" -m 32 -c 4 -B \
   -i ghcr.io/ucsd-ets/scipy-ml-notebook:stable \
   -- bash -c "
@@ -83,11 +87,15 @@ K8S_TIMEOUT_SECONDS=7200 launch.sh \
     echo '======================================================'
     echo \"=== STEP 3/3: push results to HF Hub (gate_rc=\$GATE_RC) ===\"
     echo '======================================================'
-    # Build a small summary JSON from the eval_dev log so we never lose this again.
+    # Build a small summary JSON from the eval_dev log + push EVERYTHING that
+    # exists. Each upload is wrapped: a missing partial file (e.g. mid-crash)
+    # must NOT abort the rest of the uploads.
     python -c \"
-import json, re, os
-from huggingface_hub import HfApi, upload_file
-log = open('/tmp/eval_dev.log').read()
+import json, os, re, traceback
+from pathlib import Path
+from huggingface_hub import HfApi
+log_path = Path('/tmp/eval_dev.log')
+log = log_path.read_text() if log_path.exists() else ''
 def grab(label):
     m = re.search(label + r'\s+(\d+)/\s*(\d+)\s+([\d.]+)%', log)
     return (int(m.group(1)), int(m.group(2)), float(m.group(3))) if m else (None, None, None)
@@ -95,28 +103,39 @@ mcq_c, mcq_n, mcq_pct = grab('MCQ')
 ff_c, ff_n, ff_pct = grab('Free-form')
 box_c, box_n, box_pct = grab('boxed rate')
 gate_pass = ('PROBE GATE: PASS' in log)
+gate_fail = ('PROBE GATE: FAIL' in log)
+last_infer = re.findall(r'\[infer\]\s+(\d+)/(\d+)', log)
+last_infer = last_infer[-1] if last_infer else None
 summary = {
     'gate_rc': $GATE_RC,
     'gate_pass': gate_pass,
+    'gate_fail': gate_fail,
+    'completed_eval': gate_pass or gate_fail,
+    'last_progress': last_infer,
     'mcq': {'correct': mcq_c, 'total': mcq_n, 'pct': mcq_pct, 'gate_min': 60.0},
     'ff':  {'correct': ff_c,  'total': ff_n,  'pct': ff_pct,  'gate_min': 53.0},
     'boxed_extraction': {'correct': box_c, 'total': box_n, 'pct': box_pct, 'gate_min': 95.0},
     'adapter': '$PROBE_REPO/$CKPT_SUBDIR',
 }
 print('SUMMARY:', json.dumps(summary, indent=2))
-with open('/tmp/dev_probe_summary.json', 'w') as f:
-    json.dump(summary, f, indent=2)
+Path('/tmp/dev_probe_summary.json').write_text(json.dumps(summary, indent=2))
 api = HfApi(token=os.environ['HF_TOKEN'])
-api.upload_file(path_or_fileobj='/tmp/dev_probe_summary.json',
-                path_in_repo='dev_probe_summary.json',
-                repo_id='$PROBE_REPO', repo_type='model')
-api.upload_file(path_or_fileobj='/tmp/dev_probe_responses.jsonl',
-                path_in_repo='dev_probe_responses.jsonl',
-                repo_id='$PROBE_REPO', repo_type='model')
-api.upload_file(path_or_fileobj='/tmp/eval_dev.log',
-                path_in_repo='eval_dev.log',
-                repo_id='$PROBE_REPO', repo_type='model')
-print('uploaded summary + responses + log to $PROBE_REPO')
+for local, remote in [
+    ('/tmp/dev_probe_summary.json',  'dev_probe_summary.json'),
+    ('/tmp/dev_probe_responses.jsonl','dev_probe_responses.jsonl'),
+    ('/tmp/eval_dev.log',            'eval_dev.log'),
+]:
+    if not Path(local).exists():
+        print(f'  skip (missing): {local}')
+        continue
+    try:
+        api.upload_file(path_or_fileobj=local, path_in_repo=remote,
+                        repo_id='$PROBE_REPO', repo_type='model')
+        print(f'  uploaded: {remote}')
+    except Exception as e:
+        traceback.print_exc()
+        print(f'  upload FAILED ({remote}): {e!r} — continuing')
+print('upload step done.')
 \"
 
     echo 'DONE. Pull the summary anytime:'

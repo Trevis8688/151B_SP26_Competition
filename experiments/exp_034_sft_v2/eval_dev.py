@@ -97,8 +97,25 @@ def main():
     n_mcq = sum(bool(d.get("options")) for d in dev)
     print(f"[data] dev={len(dev)} ({n_mcq} MCQ, {len(dev)-n_mcq} FF)")
 
+    # --- resume: load any responses already in --out (per-batch append-mode
+    # writes survive a pod kill; we skip dev items already covered). ---
+    out_path = Path(args.out)
+    done_by_id: dict = {}
+    if out_path.exists():
+        for line in out_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                done_by_id[rec["id"]] = rec["response"]
+            except Exception:
+                pass
+        print(f"[resume] {len(done_by_id)} responses already on disk at {out_path}")
+    todo = [d for d in dev if d["id"] not in done_by_id]
+    print(f"[resume] {len(todo)} remaining to infer")
+
     rendered = []
-    for item in dev:
+    for item in todo:
         system, user = _build_prompt(item["question"], item.get("options"), P)
         fewshot = P.FEWSHOT_MCQ if item.get("options") else P.FEWSHOT_MATH
         messages = [{"role": "system", "content": system}, *fewshot, {"role": "user", "content": user}]
@@ -106,29 +123,39 @@ def main():
             messages, tokenize=False, add_generation_prompt=True,
         ))
 
-    # --- batched generate ---
-    responses = []
+    # --- batched generate, writing per-batch (crash-resilient) ---
     gen_kwargs = dict(
         max_new_tokens=args.max_new_tokens,
         do_sample=True, temperature=0.6, top_p=0.95, top_k=20,
         pad_token_id=tokenizer.pad_token_id,
     )
-    for bstart in range(0, len(rendered), BATCH_SIZE):
-        batch = rendered[bstart:bstart + BATCH_SIZE]
-        enc = tokenizer(batch, return_tensors="pt", padding=True, truncation=False).to(model.device)
-        with torch.no_grad():
-            out = model.generate(**enc, **gen_kwargs)
-        gen = out[:, enc["input_ids"].shape[1]:]
-        responses.extend(tokenizer.batch_decode(gen, skip_special_tokens=True))
-        print(f"[infer] {min(bstart + BATCH_SIZE, len(rendered))}/{len(rendered)}", flush=True)
+    out_fp = open(out_path, "a", buffering=1)  # line-buffered append
+    try:
+        for bstart in range(0, len(rendered), BATCH_SIZE):
+            batch_items = todo[bstart:bstart + BATCH_SIZE]
+            batch_text = rendered[bstart:bstart + BATCH_SIZE]
+            enc = tokenizer(batch_text, return_tensors="pt", padding=True, truncation=False).to(model.device)
+            with torch.no_grad():
+                out = model.generate(**enc, **gen_kwargs)
+            gen = out[:, enc["input_ids"].shape[1]:]
+            batch_responses = tokenizer.batch_decode(gen, skip_special_tokens=True)
+            for item, resp in zip(batch_items, batch_responses):
+                rec = {"id": item["id"], "is_mcq": bool(item.get("options")), "response": resp.strip()}
+                out_fp.write(json.dumps(rec) + "\n")
+                done_by_id[item["id"]] = resp.strip()
+            print(f"[infer] {min(bstart + BATCH_SIZE, len(rendered))}/{len(rendered)}"
+                  f"  (total on disk: {len(done_by_id)}/{len(dev)})", flush=True)
+    finally:
+        out_fp.close()
+    print(f"[infer] wrote {out_path}")
 
-    responses = [r.strip() for r in responses]
-    with open(args.out, "w") as f:
-        for item, resp in zip(dev, responses):
-            f.write(json.dumps({
-                "id": item["id"], "is_mcq": bool(item.get("options")), "response": resp,
-            }) + "\n")
-    print(f"[infer] wrote {args.out}")
+    # Rebuild aligned response list from disk (handles resume across pods).
+    responses = [done_by_id.get(d["id"], "") for d in dev]
+    n_empty = sum(1 for r in responses if not r)
+    if n_empty:
+        print(f"[WARN] {n_empty}/{len(dev)} dev items have no response (incomplete run);"
+              " score below treats empties as wrong, so gate will fail on extraction rate."
+              " This is intentional — do not trust a PASS/FAIL from a partial run.")
 
     # --- score ---
     if args.judger_dir not in sys.path:
