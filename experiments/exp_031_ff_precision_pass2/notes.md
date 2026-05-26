@@ -103,17 +103,27 @@ The board reference for this submission is **exp_017's 0.586 stage-1** (raw pass
 | **+0.000 to +0.009** | Stage-1 lift ambiguous (consistent with the dev's +3pp soft signal) | **Conditional:** if Kaggle slots permit before deadline, still run exp_034 (rescue layer is cheap, ~20 min Kaggle slot) since rescue can rescue residuals the FF-precision prompt didn't fix; otherwise lock exp_018 (0.628). |
 | **≤ −0.001** | FF-precision regresses pass-2 stage-1 on the board (local↔board inversion again, see [[project_grpo_local_no_transfer]]) | **STOP.** Lock exp_018 (0.628) as final. Do NOT layer rescue — a regressed stage-1 + saturated rescue is highly likely to underperform 0.628. |
 
-### Full results (fill in after Kaggle run)
+### Full results (2026-05-26)
 
 | Segment | exp_017 full (pass-2, orig prompts) | exp_031 full (pass-2, FF-precision) | Δ |
 |---|---:|---:|---:|
-| MCQ (375) | 63.73% | tbd | tbd |
-| Free-form (751) | 53.40% | tbd | tbd |
-| Overall (1126) | 56.84% | tbd | tbd |
-| **Board (private 943)** | **0.586** | **tbd** | **tbd** |
+| MCQ (375) | 63.73% | **65.07%** | +1.34pp |
+| Free-form (751) | 53.40% | **54.99%** | +1.59pp |
+| Overall (1126) | 56.84% | **58.35%** | **+1.51pp** |
+| **Board (private 943)** | **0.586** | **0.568** | **−0.018** |
 
-### Notes for the run
+### Conclusion (full run) — **STOP per gate**
+
+Board 0.568 lands in the `≤ −0.001` band of the pre-committed gate → STOP, lock exp_018 (0.628) as final, **do NOT layer rescue**.
+
+The local↔board inversion is the same pattern exp_029 (pass-5 GRPO) hit, but here it fired for a **prompt-only** change on a GRPO-base model. So the inversion mechanism is no longer GRPO-specific — any lever tuned against the public-overlapping dev split risks the same fate. Public +1.51pp / dev FF +3pp / board −1.8pp.
+
+Hypothesised mechanism: the FF-precision prompt's exact-fraction / high-precision directive helps on the public dev (where pass-2's wrong_math bucket has fixable rounding errors) but is mildly counterproductive on private (a different distribution where the precision instruction triggers over-formalisation or echo artefacts in cases that would otherwise have answered cleanly). The 2 verified per-case recoveries (id=32, 457) on dev were real; they just don't dominate the private-side distribution.
+
+This kills the planned exp_031-stage-1 + rescue compound (originally numbered exp_034 in this doc; that slot is now SFT v2). Do not pursue.
+
+### Notes for the run (kept for the record)
 - Same Kaggle notebook flow as exp_017 — no special handling needed.
-- The dev probe ran on the SAME notebook and prompt; confidence is high that this will execute cleanly.
-- Watch for the diagnostic tell: "loaded 1126 questions" (not 200) — confirms the dataset refresh + split=full landed.
-- Stage-1 board submission message suggestion: `"exp_031 stage-1: pass-2 + FF-precision prompt (full, raw)"`.
+- The dev probe ran on the SAME notebook and prompt; the run executed cleanly.
+- Diagnostic tell confirmed: "loaded 1126 questions" — dataset refresh + split=full landed.
+- Stage-1 board submission message used: `"exp_031 stage-1: pass-2 + FF-precision prompt (full, raw)"`.
