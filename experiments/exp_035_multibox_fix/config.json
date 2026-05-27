@@ -1,0 +1,10 @@
+{
+  "_comment": "exp_035 — judger-extraction post-processing fix on top of exp_018. NO model change, NO prompt change. The judger's extract_all_boxed only takes the last contiguous group of \\boxed{} answers; multi-part responses with boxes separated by text get truncated to a single box. Strict rule (verified on public, 0 breaks / 8 recoveries / +0.71pp): if question has K>=2 [ANS] markers AND response has >=K boxed expressions AND the judger currently extracts <K items, append the last K boxes as a contiguous 'Final Answer:' trailing block.",
+
+  "_source": "exp_018_pass2_rescue/private_responses.jsonl",
+  "_transform": "scripts/apply_multibox_fix.py (strict rule)",
+  "_baseline": "exp_018 Kaggle 0.628 (champion)",
+  "_expected_lift_local": "+0.71pp on public (8/1126 questions, 0 breaks)",
+  "_expected_lift_board": "0.005-0.010 if private has similar [ANS]-marked multi-part question fraction",
+  "_risk": "Near-zero. The rule only ADDS a trailing block to responses where judger currently extracts FEWER answers than expected. Currently-correct responses are left untouched."
+}
