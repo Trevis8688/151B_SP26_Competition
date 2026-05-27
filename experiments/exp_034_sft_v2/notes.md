@@ -183,27 +183,49 @@ format (few-shots omitted per-example to keep sequences short).
 
 ## Results (fill in after each phase)
 
-### Phase A — probe (after ~1h)
+### Phase A — probe (recovered via re-eval pod trduong-3314570 on 2026-05-26)
+
+The original launch pod was deleted before its gate output could be read.
+`scripts/reeval_sft_v2_probe.sh` pulled the probe adapter from
+`TrevorDuong/qwen3-4b-pass2-sft-v2-probe/checkpoint-final` and re-ran
+`eval_dev.py` on the 200q dev split.
 
 | Signal | Threshold | Probe result | Pass? |
 |---|---:|---:|:-:|
-| MCQ dev % | 60.0 | tbd | tbd |
-| FF dev % | 53.0 | tbd | tbd |
-| `\boxed{}` extraction % | 95.0 | tbd | tbd |
+| MCQ dev % | 60.0 | **23.00%** (23/100) | **FAIL** (−37.0pp) |
+| FF dev % | 53.0 | **33.00%** (33/100) | **FAIL** (−20.0pp) |
+| `\boxed{}` extraction % | 95.0 | **68.50%** (137/200) | **FAIL** (−26.5pp) |
 
-### Phase C — full (after ~6-8h more)
+**Verdict: catastrophic forgetting + format degradation.** MCQ collapsed −39pp vs the pass-2 dev baseline (62.00%) — worse than exp_008's −22pp collapse. The two fixes that supposedly avoided exp_008's mistake (Thinking-family base + MCQ data mix via AQuA-RAT) were not enough.
 
-| Segment | exp_017 dev baseline | SFT-v2 full dev | Δ |
-|---|---:|---:|---:|
-| MCQ (100) | 62.00% | tbd | tbd |
-| FF (100) | 53.00% | tbd | tbd |
-| Overall (200) | 57.50% | tbd | tbd |
+The 31.5% missing-\boxed{} rate is the most surprising signal: every SFT training example had `\\boxed{{answer}}` at the end of the completion, and the prompt-completion completion-only-loss masking *should* have preserved that format adherence. Three plausible root causes (NOT investigating further given the time budget):
+1. Inference-time chat template mismatch — the probe adapter saved its own `chat_template.jinja`; the tokenizer at inference time may have applied a different one, breaking the prompt → completion boundary the model learned.
+2. The `<think>...</think>` wrapper around the rationale in training examples may have driven the model to spend its 4096 token budget inside `<think>` and never emit `\\boxed{}`.
+3. AQuA-RAT's narrative MCQ rationale style ("The answer is E.") may have taught a free-form output mode that overrides Thinking-2507's `\boxed{}` reflex.
 
-### Stage-1 board (after Kaggle full-set inference)
+### Phase B and beyond — not run
 
-| Floor (exp_017 stage-1) | SFT-v2 stage-1 | Δ |
-|---:|---:|---:|
-| 0.586 | tbd | tbd |
+Phase A FAIL is unconditional STOP per the pre-committed decision tree. Phase B (full train) and Phase C (Kaggle inference + board) were not executed.
+
+### Phase C — full
+
+Not run. Phase A FAIL aborted the pipeline.
+
+### Stage-1 board
+
+Not run. Phase A FAIL aborted the pipeline.
+
+## Final conclusion (2026-05-26)
+
+exp_034 SFT v2 is dead. The probe gate caught catastrophic forgetting in ~3h instead of letting an 8h full train + Kaggle inference + dev eval cycle waste ~12h confirming it. The gate design worked as intended.
+
+All three remaining-lever candidates have now run their course:
+- GRPO scaling: dead (exp_029 board 0.586, regression vs pass-4)
+- Rescue retuning: dead (exp_033 board 0.625, tie/regression vs 0.628)
+- Prompt-tuning on GRPO base: dead (exp_031 board 0.568, regression)
+- SFT on GRPO base: dead (exp_034 probe gate −39pp MCQ)
+
+**exp_018 (Kaggle 0.628, local 60.39%) is the final competition score.**
 
 ## Risks (open list, monitor across phases)
 
