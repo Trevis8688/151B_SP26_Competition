@@ -1,0 +1,21 @@
+# Inference dependencies for run_inference.py (the submission pipeline).
+# Python 3.10+ and a CUDA GPU are required.
+#
+# Qwen3 tokenizers require transformers >= 4.51 (older versions raise
+# "data did not match any variant of untagged enum ModelWrapper").
+transformers>=4.51,<5
+tokenizers>=0.21
+
+# vLLM serves both GRPO checkpoints. run_inference.py isolates each model in its
+# own subprocess, so it does NOT rely on in-process engine teardown or on the
+# legacy V0 engine — a modern V1-only vLLM works too.
+#
+# These are the exact versions verified on our hardware (DSMLP A5000 + Kaggle T4):
+# vllm 0.8.5 is the first release with Qwen3 architecture support and requires
+# torch 2.6.0. Install torch from the cu124 wheel index — CUDA 12.4 binaries run
+# on a 12.2 driver via minor-version compat; an unpinned vllm pulls torch 2.11 +
+# cu130 which needs a CUDA 13 driver and fails to init CUDA on these nodes:
+#   pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+#   pip install -r requirements.txt
+vllm==0.8.5
+torch==2.6.0
