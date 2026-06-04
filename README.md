@@ -41,7 +41,25 @@ one row per private question). Nothing manual or external is required.
 |---|---|
 | **GPU used for the submission** | Kaggle **T4 × 2** (16 GB each, SM 7.5) |
 | **Precision** | float16 (the T4 has no bfloat16) |
-| **Approx. inference time** | ~80 min for the full public+private run on T4×2; **private-only (943 questions) ≈ 45–60 min** |
+| **Approx. inference time** | Dominated by stage-1 generation — varies widely with GPU and reasoning-chain length (see note). |
+
+**Inference time.** Stage-1 generation is the bottleneck: the GRPO-pass-2 policy
+emits long chain-of-thought, and on a single 16 GB T4 the engine is KV-cache-bound
+at `max_model_len=10240` (only ~2.8 sequences fit concurrently, so vLLM
+preempts/recomputes under load). Two measured data points on Kaggle T4 (tp=1):
+
+- **Submission run (stage-1, notebook):** full public+private split — 2,069
+  questions in **7 h 20 min** (~13 s/question).
+- **`run_inference.py` (stage-1, this script):** private set (943 questions)
+  observed at **~60 s/question** — i.e. **several hours** for the full private
+  set on a single T4. (Per-question this is slower than the blended notebook rate
+  above; the private questions trend toward longer outputs than the public ones.)
+
+Stage-2 rescue adds only ~15–20 min — it re-runs just the missing-`\boxed`
+candidates. **A single A100/Ampere GPU, or `--tensor-parallel-size 2` on Ampere+
+multi-GPU hardware, is dramatically faster and is the recommended way to
+reproduce quickly.** (The graders' standard verification re-runs the pipeline on
+a 200-question subset, not the full set.)
 
 `run_inference.py` defaults vLLM tensor parallelism to **1 GPU** — the
 configuration the submission's stage-1 ran under, and the only value safe on
