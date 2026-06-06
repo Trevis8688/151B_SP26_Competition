@@ -15,3 +15,13 @@ experiments/**/submission.csv
 data/difficulty_samples*.jsonl
 experiments/**/difficulty_samples*.jsonl
 experiments/**/raw_outputs*.jsonl
+
+# Presentation files (local only)
+presentation/
+
+# Post-competition large/regenerable outputs (keep small reports + analysis text)
+postcomp/**/*_responses.jsonl
+postcomp/**/results*.jsonl
+postcomp/**/probe_outputs.jsonl
+postcomp/**/submission.csv
+postcomp/harness/__pycache__/

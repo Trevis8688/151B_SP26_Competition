@@ -1,0 +1,36 @@
+{
+  "model_id": "TrevorDuong/qwen3-4b-thinking-grpo-pass2",
+  "_model_note": "exp_018 champion stage-1 model (GRPO pass-2). Same as run_inference.py STAGE1_MODEL — apples-to-apples baseline.",
+  "max_tokens": 8192,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "num_samples": 1,
+  "split": "dev",
+
+  "probe": {
+    "_comment": "DSMLP go/no-go probe: 40-question dev free-form mini-eval across prompt conditions. Confirms (1) model emits runnable final code, (2) which variant wins, (3) net dev-FF accuracy vs baseline. Gate: PAL emits >=60% runnable code AND net accuracy >= baseline.",
+    "sample_size": 40,
+    "sample_seed": 42,
+    "conditions": ["baseline", "fullprec_A", "pal_nodemo", "pal_demo"],
+    "force_include_recoverable": [217, 457, 775, 888, 32, 278, 312, 811, 895],
+    "_force_note": "9 precision-recoverable dev-FF errors (analyze_precision_ceiling.py) forced into the sample so the probe directly observes recovery, not just code emission."
+  },
+
+  "tool": {
+    "timeout_s": 5.0,
+    "mem_mb": 4096,
+    "_note": "executor.py sandbox limits. 5s/4GiB is ample for sympy/numpy final-answer computation."
+  },
+
+  "vllm": {
+    "max_model_len": 10240,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 20480,
+    "gpu_memory_utilization": 0.90,
+    "dtype": "bfloat16",
+    "_dtype_note": "A5000 (sm 8.6) supports bf16. On a T4 fallback use float16."
+  },
+
+  "notes": "exp_040 one-shot PAL precision lever. See notes.md (hypothesis: ~20% of dev FF errors are precision-recoverable, ceiling ~+4.5pp overall dev) and postcomp/DEVLOG.md (2026-06-05)."
+}
