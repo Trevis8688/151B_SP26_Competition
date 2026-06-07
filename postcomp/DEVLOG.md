@@ -278,6 +278,96 @@ of a code-emission probe followed by a separate accuracy run.
 - ✅ Harness (executor + pal) built, GPU-free, all self-tests pass.
 - ✅ Precision ceiling measured: ~20% of dev FF errors, +4.5pp overall dev (ceiling).
 - ✅ Probe fully authored, GPU-free-tested, committable. Native-tool vs fence decided.
-- ⏭ **Handoff: user launches `scripts/launch_exp040_probe.sh` on DSMLP** (I can't reach
-  the cluster from the Mac). Then read the GATE verdict from `kubectl logs`.
-- ⏭ After commit: push `postcomp/` to main so the DSMLP `git fetch` sees it.
+- ✅ **Committed + pushed to `origin/postcomp`** (commit 24b6b2a). Post-comp work is
+  isolated on the `postcomp` branch so graders browsing the public repo see only the
+  clean `main` (verified: 0 postcomp entries on origin/main). Bundled the new-judge
+  `judger.py` (probe requires fraction/decimal/sqrt equivalence). Pre-existing
+  uncommitted changes on main (notebooks, notes, log.jsonl) were deliberately NOT
+  swept into the commit.
+- ⏭ **Handoff: user launches the probe on DSMLP** (no kubectl/launch.sh on the Mac).
+  On dsmlp-login:
+    ```
+    cd ~/151B_SP26_Competition
+    git fetch origin postcomp && git checkout -B postcomp origin/postcomp
+    bash scripts/launch_exp040_probe.sh
+    kubectl get pods                     # find the pod
+    kubectl logs -f <pod>                # PROBE REPORT + GATE verdict print here
+    ```
+  Then paste the report back; we read recovery/regression/runnable% and decide
+  whether PAL clears the gate before any full dev run.
+
+---
+
+## 2026-06-07 — Probe ran, OOM fixed, then a 6h JUDGE HANG ate the run. Two-phase rewrite.
+
+### What happened (two failures, one resolved cleanly)
+The first DSMLP launch hit a vLLM A5000 OOM at generation 33/160 (**bug-040**):
+`max_num_batched_tokens=20480` allocated a 760 MiB MLP buffer the V1-engine
+CUDA-graph pools (2.11 GiB) left no room for. Fix (committed ca0bd4f): batched-tokens
+20480→8192, util 0.90→0.85, `max_num_seqs` 32→16, `enforce_eager=true`, and set
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. **That worked** — the re-run
+generated all **160/160** (≈32 min, ~430 tok/s).
+
+Then the pod went to `Error` after sitting ~6h. Post-mortem from `kubectl logs`:
+the log ends *exactly* at `Processed prompts: 100%` with **total silence** after —
+no report, no traceback. That signature (silent, then SIGKILL at the 6h
+`K8S_TIMEOUT_SECONDS` ceiling) is a **hang, not a crash** — and an exception is ruled
+out because `judge()` already wraps `auto_judge` in try/except (an infinite loop is
+not an exception). **`auto_judge` has no internal timeout, and sympy
+`simplify`/`equals` can spin forever** on a pathological symbolic comparison built
+from model output. `ls probe_*` confirmed the cost: **only `probe_run.py` present** —
+no outputs file. The v1 probe wrote `probe_outputs.jsonl` *after* the judging loop, so
+the hang destroyed **all 160 generations (32 min of GPU)**. This is **bug-041**.
+
+### Root cause, stated plainly
+Two design faults compounded: (1) the expensive GPU output was only persisted *after* a
+fragile CPU step; (2) the judge had no kill-switch. Either alone is survivable; together
+they turn one slow sympy comparison into a total loss + a 6h GPU burn.
+
+### Fix — split the probe into two phases; add a reusable timeout-safe judge
+- **`probe_run.py` (phase 1, GPU):** generate → **checkpoint every completion to
+  `probe_generations.jsonl` the instant `llm.generate` returns** → exit. No judging in
+  the GPU pod. The expensive work is now durable before anything fragile runs.
+- **`probe_judge.py` (phase 2, CPU):** read the checkpoint → sandbox+assemble PAL →
+  judge with a **per-item SIGKILL timeout** → stream `probe_outputs.jsonl`
+  incrementally → report. Fresh process (no CUDA → forking is safe), GPU-free, so it's
+  re-runnable on the login node if it ever dies. **Logs any id that trips the timeout**
+  — that id is the sympy-hang culprit we couldn't see when it took down the whole job.
+- **`postcomp/harness/safe_judge.py` (new permanent harness):** `judge_safe(pred, gold,
+  timeout=20)` runs the judge in a fresh `python -I` **subprocess** and relies on
+  `subprocess.run(timeout=)` issuing **SIGKILL** — which survives even a C-level
+  (gmpy2/mpmath) hang that `multiprocessing.terminate()`/SIGTERM would ignore. Chosen
+  over `multiprocessing` for that robustness *and* to sidestep fork-from-CUDA. This is
+  now the standard judge entry point for the full 200q run and any submission build —
+  never call `auto_judge` directly on model text again.
+- `config.json`: added `tool.judge_timeout_s=20`. `launch_exp040_probe.sh`: runs
+  phase 1 then phase 2; documents the standalone phase-2 recovery command.
+
+### Local validation BEFORE re-spending GPU (advisor gate #1)
+- `safe_judge.py` self-test on `my-virtenv`: a `while True: pass` worker is **KILLED in
+  2.0s** (proves SIGKILL works); real judge path correct/wrong both right; `0.5 == 1/2`
+  passes (re-confirms this is the new judge). ALL PASS.
+- End-to-end `probe_judge.py` smoke test with a synthetic 4-condition file: baseline
+  rounds→wrong, `fullprec_A` recovers, both PAL arms ran the sandbox (runnable 100%,
+  used_tool 100%) and overrode the rounded box→correct; recovery/regression/GATE logic
+  and report structure all correct; zero judge timeouts. The whole phase-2 pipeline is
+  proven on the Mac.
+
+### Lesson (carried into Phase 2)
+A judger that can spin forever on model output *is itself a robustness finding* — it
+will hang the 200q dev run and any submission pipeline too. The timeout-safe judge
+belongs in the standard path, and **expensive GPU output must be checkpointed before any
+CPU post-processing touches it.** Both are now baked in.
+
+### Status / next
+- ✅ bug-040 (OOM) fixed and confirmed (160/160 generated).
+- ✅ bug-041 (judge-hang data-loss) fixed: two-phase + `safe_judge`, validated locally.
+- ⏭ **Re-launch on DSMLP** (delete any `Error` pod first to free GPU quota):
+    ```
+    cd ~/151B_SP26_Competition
+    git fetch origin postcomp && git reset --hard origin/postcomp
+    bash scripts/launch_exp040_probe.sh
+    kubectl get pods && kubectl logs -f <pod>
+    ```
+  The generation checkpoints first; the judge can no longer hang 6h or lose the run.
+  Paste the PROBE REPORT (+ any judge-timeout ids) and we read the gate.

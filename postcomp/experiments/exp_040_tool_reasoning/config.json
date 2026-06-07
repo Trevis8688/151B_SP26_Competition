@@ -20,7 +20,9 @@
   "tool": {
     "timeout_s": 5.0,
     "mem_mb": 4096,
-    "_note": "executor.py sandbox limits. 5s/4GiB is ample for sympy/numpy final-answer computation."
+    "judge_timeout_s": 20.0,
+    "_note": "executor.py sandbox limits. 5s/4GiB is ample for sympy/numpy final-answer computation.",
+    "_judge_note": "judge_timeout_s: per-item SIGKILL budget for safe_judge.py. auto_judge has no internal timeout and hung ~6h in the v1 probe; 20s is generous for a single sympy comparison and bounds the worst case at 160*20s if every judge hangs (it won't)."
   },
 
   "vllm": {

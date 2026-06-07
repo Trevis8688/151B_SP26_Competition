@@ -7,6 +7,15 @@
 #   runnable final code AND whether one-shot PAL net-improves dev FF accuracy.
 #   Short job (~160 generations); the full report PRINTS to the log (kubectl logs).
 #
+# TWO PHASES (postcomp/DEVLOG.md 2026-06-07 — the v1 probe lost 32 min of GPU when
+# the judge hung 6h and outputs were only written after judging):
+#   phase 1  probe_run.py    GPU: generate + checkpoint -> probe_generations.jsonl
+#   phase 2  probe_judge.py  CPU: sandbox + judge (per-item SIGKILL timeout) -> report
+# Phase 1 checkpoints the expensive work first; phase 2 cannot lose it or hang.
+# If phase 2 ever dies, re-run it alone (no GPU) on the login node:
+#   ~/.venv-difficulty-v2/bin/python \
+#     postcomp/experiments/exp_040_tool_reasoning/probe_judge.py
+#
 # VENV: reuses $HOME/.venv-difficulty-v2 (vllm==0.8.5 + sympy + antlr4 +
 #   transformers<5) — exactly the probe's stack, and the 5GB PVC quota means we
 #   keep only one venv. Self-heals if the pin is wrong/missing.
@@ -58,8 +67,13 @@ K8S_TIMEOUT_SECONDS=21600 launch.sh \
     python -c "import torch, vllm, transformers, sympy, mpmath; print(f\"torch={torch.__version__} vllm={vllm.__version__} transformers={transformers.__version__} sympy={sympy.__version__}\")"
     python -c "import torch; assert torch.cuda.is_available(); print(f\"CUDA OK: {torch.cuda.get_device_name(0)}\")"
 
-    # ---- run the probe (report prints to stdout / kubectl logs) ----
+    # ---- phase 1: generate + checkpoint (GPU) ----
     HF_TOKEN=$(cat "$HOME/.hf_token") python postcomp/experiments/exp_040_tool_reasoning/probe_run.py
+
+    # ---- phase 2: sandbox + judge + report (CPU; fresh process, no CUDA fork) ----
+    # Generations are already checkpointed, so a hang here loses nothing and the
+    # per-item SIGKILL timeout means it cannot stall for 6h like the v1 probe.
+    python postcomp/experiments/exp_040_tool_reasoning/probe_judge.py
   '
 
 echo ""

@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
-"""exp_040 go/no-go PROBE — 40-question dev free-form mini-eval (DSMLP, vLLM).
+"""exp_040 PROBE — PHASE 1 (GPU): generate + checkpoint. NO judging here.
 
-One run answers all the Phase-1 open questions:
-  1. Does Qwen3-4B-Thinking emit a *runnable* final code block when asked? (per arm)
-  2. Which prompt variant wins: baseline / fullprec_A / pal_nodemo / pal_demo?
-  3. Does the full PAL pipeline net-improve dev FF accuracy (recovery vs regression)?
+Generates 40 dev free-form questions x 4 conditions (baseline / fullprec_A /
+pal_nodemo / pal_demo) = 160 completions on DSMLP A5000, then writes every raw
+completion to `probe_generations.jsonl` and EXITS. Judging/sandbox happens in
+phase 2 (probe_judge.py), which is CPU-only and runs without the GPU.
 
-For each of 40 dev free-form questions (9 known precision-recoverable forced in +
-random fill, seed 42) it generates under every condition, runs PAL conditions through
-the real sandbox (executor.py → pal.py), and judges every result with the repo judger.
+WHY SPLIT (postcomp/DEVLOG.md 2026-06-07): the first probe generated all 160
+completions, then the judging loop hung inside sympy for ~6h until the pod's
+wall-clock kill — and because outputs were only written *after* judging, all 160
+generations (32 min of GPU) were lost. Lesson: checkpoint the expensive GPU work
+to disk the instant it exists; never let a downstream CPU step put it at risk.
 
-GATE (notes.md): a PAL arm must emit >=60% runnable code AND net dev-FF accuracy
->= baseline (recovery >= regression). If it fails, redesign the prompt before scaling.
+Phase 2 (`probe_judge.py`) reads `probe_generations.jsonl` from the shared PVC and
+judges with a per-item SIGKILL timeout (safe_judge.py) — so a sympy hang can never
+again destroy a generation or stall for 6h.
 
-Run on DSMLP A5000 via scripts/launch_exp040_probe.sh. Writes:
-  probe_outputs.jsonl  — every generation + per-item eval
-  probe_report.json    — per-condition summary + the gate verdict
+Run on DSMLP A5000 via scripts/launch_exp040_probe.sh (which runs phase 2 after).
+Writes: probe_generations.jsonl  — {condition, id, gold, raw} per completion.
 """
 import os
 
-# Must be set BEFORE torch/vllm import (vllm is imported inside main()). Reduces
-# allocator fragmentation — the bug-040 OOM left 1.22 GiB reserved-but-unallocated.
+# Must be set BEFORE torch/vllm import. Reduces allocator fragmentation
+# (the bug-040 OOM left 1.22 GiB reserved-but-unallocated).
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import json
@@ -30,15 +32,13 @@ from pathlib import Path
 
 EXP_DIR = Path(__file__).resolve().parent
 REPO = EXP_DIR.parents[2]
-sys.path.insert(0, str(REPO))                       # judger
-sys.path.insert(0, str(REPO / "postcomp" / "harness"))  # executor, pal
+sys.path.insert(0, str(REPO))                            # (repo root, for parity)
+sys.path.insert(0, str(REPO / "postcomp" / "harness"))   # prompts live next to exp
 
-import prompts as P                                  # noqa: E402  (exp-local prompts.py)
-from judger import Judger                            # noqa: E402
-import pal                                           # noqa: E402
+import prompts as P                                       # noqa: E402  (exp-local prompts.py)
 
 CFG = json.loads((EXP_DIR / "config.json").read_text())
-J = Judger(strict_extract=False)
+GEN_FILE = EXP_DIR / "probe_generations.jsonl"
 
 
 def load_dev_ff_sample():
@@ -68,21 +68,13 @@ def build_messages(condition, question):
     return [{"role": "system", "content": system}, *demo, {"role": "user", "content": question}]
 
 
-def judge(response, gold):
-    gold_list = gold if isinstance(gold, list) else [gold]
-    try:
-        return bool(J.auto_judge(pred=response, gold=gold_list, options=[[]] * len(gold_list)))
-    except Exception:
-        return False
-
-
 def main():
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
 
     sample = load_dev_ff_sample()
     conditions = CFG["probe"]["conditions"]
-    print(f"[probe] {len(sample)} dev FF questions x {len(conditions)} conditions "
+    print(f"[probe/gen] {len(sample)} dev FF questions x {len(conditions)} conditions "
           f"= {len(sample)*len(conditions)} generations", flush=True)
 
     tok = AutoTokenizer.from_pretrained(CFG["model_id"])
@@ -110,64 +102,19 @@ def main():
     sp = SamplingParams(n=1, max_tokens=CFG["max_tokens"], temperature=CFG["temperature"],
                         top_p=CFG["top_p"], top_k=CFG["top_k"], min_p=0.0)
 
-    print("[probe] generating ...", flush=True)
+    print("[probe/gen] generating ...", flush=True)
     outs = llm.generate([t[3] for t in tagged], sampling_params=sp)
 
-    tool_to = CFG["tool"]["timeout_s"]
-    tool_mem = CFG["tool"]["mem_mb"]
-
+    # ── CHECKPOINT IMMEDIATELY — the expensive GPU work is now safe on disk. ──
     rows = []
     for (cond, qid, gold, _), o in zip(tagged, outs):
-        text = o.outputs[0].text.strip()
-        rec = {"condition": cond, "id": qid, "gold": gold, "raw": text}
-        if cond in ("pal_nodemo", "pal_demo"):
-            code = pal.last_code_block(text)
-            rec["emitted_code"] = code is not None
-            if code is not None:
-                ex = pal.run_code(code, timeout_s=tool_to, mem_mb=tool_mem)
-                outcome = pal.assemble(text, ex)
-                rec["runnable"] = ex.ok
-                rec["answer_line"] = pal.parse_tool_answer(ex.stdout) is not None if ex.ok else False
-                rec["used_tool"] = outcome.used_tool
-                rec["code_after_think"] = ("</think>" in text) and (text.rfind("```") > text.rfind("</think>"))
-                final = outcome.response
-            else:
-                rec["runnable"] = rec["answer_line"] = rec["used_tool"] = rec["code_after_think"] = False
-                final = text
-        else:
-            final = text
-        rec["correct"] = judge(final, gold)
-        rows.append(rec)
+        rows.append({"condition": cond, "id": qid, "gold": gold,
+                     "raw": o.outputs[0].text.strip()})
+    GEN_FILE.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
 
-    (EXP_DIR / "probe_outputs.jsonl").write_text(
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
-
-    # ── Summaries ──
-    base = {r["id"]: r["correct"] for r in rows if r["condition"] == "baseline"}
-    report = {"n": len(sample), "conditions": {}}
-    for cond in conditions:
-        cr = [r for r in rows if r["condition"] == cond]
-        acc = sum(r["correct"] for r in cr)
-        rep = {"accuracy": acc, "accuracy_pct": round(100 * acc / len(cr), 1)}
-        if cond != "baseline":
-            rep["recovery"] = sorted(r["id"] for r in cr if r["correct"] and not base.get(r["id"], False))
-            rep["regression"] = sorted(r["id"] for r in cr if not r["correct"] and base.get(r["id"], False))
-            rep["net_vs_baseline"] = len(rep["recovery"]) - len(rep["regression"])
-        if cond in ("pal_nodemo", "pal_demo"):
-            rep["emitted_code_pct"] = round(100 * sum(r["emitted_code"] for r in cr) / len(cr), 1)
-            rep["runnable_pct"] = round(100 * sum(r.get("runnable", False) for r in cr) / len(cr), 1)
-            rep["used_tool_pct"] = round(100 * sum(r.get("used_tool", False) for r in cr) / len(cr), 1)
-            rep["code_after_think_pct"] = round(100 * sum(r.get("code_after_think", False) for r in cr) / len(cr), 1)
-            rep["gate_runnable_ok"] = rep["runnable_pct"] >= 60.0
-            rep["gate_net_ok"] = rep["net_vs_baseline"] >= 0
-            rep["GATE_PASS"] = rep["gate_runnable_ok"] and rep["gate_net_ok"]
-        report["conditions"][cond] = rep
-
-    (EXP_DIR / "probe_report.json").write_text(json.dumps(report, indent=2))
-    print("\n===== PROBE REPORT =====")
-    print(json.dumps(report, indent=2))
-    pal_pass = any(report["conditions"].get(c, {}).get("GATE_PASS") for c in ("pal_nodemo", "pal_demo"))
-    print(f"\nGATE: {'PASS — proceed to full dev run' if pal_pass else 'FAIL — redesign prompt before scaling'}")
+    print(f"[probe/gen] wrote {len(rows)} completions -> {GEN_FILE.name}", flush=True)
+    print("[probe/gen] phase 1 done. Run probe_judge.py next "
+          "(CPU-only; safe to run on the login node).", flush=True)
 
 
 if __name__ == "__main__":
