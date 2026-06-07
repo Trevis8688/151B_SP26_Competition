@@ -17,6 +17,12 @@ Run on DSMLP A5000 via scripts/launch_exp040_probe.sh. Writes:
   probe_outputs.jsonl  — every generation + per-item eval
   probe_report.json    — per-condition summary + the gate verdict
 """
+import os
+
+# Must be set BEFORE torch/vllm import (vllm is imported inside main()). Reduces
+# allocator fragmentation — the bug-040 OOM left 1.22 GiB reserved-but-unallocated.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import json
 import random
 import sys
@@ -98,6 +104,7 @@ def main():
         max_model_len=v["max_model_len"],
         max_num_seqs=v["max_num_seqs"],
         max_num_batched_tokens=v["max_num_batched_tokens"],
+        enforce_eager=v.get("enforce_eager", False),  # bug-040: frees CUDA-graph pools on A5000
         trust_remote_code=True,
     )
     sp = SamplingParams(n=1, max_tokens=CFG["max_tokens"], temperature=CFG["temperature"],
