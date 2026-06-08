@@ -25,6 +25,14 @@ import os
 # (the bug-040 OOM left 1.22 GiB reserved-but-unallocated).
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+# Engine selector for the known-good-match discriminator. run_inference.py (0.581/0.660)
+# runs the V0 engine (VLLM_USE_V1=0); the probe defaulted to V1 (vLLM 0.8.5 default).
+# dtype was already ruled out (fp16 degenerates identically), so PROBE_V0=1 tests the
+# last remaining divergence — whether the V1 sampling path (PyTorch-native top-p/top-k
+# fallback) is what collapses long generations into "0 0 0". Must precede the vllm import.
+if os.environ.get("PROBE_V0") == "1":
+    os.environ["VLLM_USE_V1"] = "0"
+
 import json
 import random
 import sys

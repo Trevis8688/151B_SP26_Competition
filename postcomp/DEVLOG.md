@@ -440,3 +440,31 @@ added: `PROBE_DTYPE` / `PROBE_CONDITIONS` env overrides in `probe_run.py`/`probe
 accuracy → flip config to float16. If not → add V0 (`VLLM_USE_V1=0`) to fully match
 run_inference.py. Reserve option: run eval on Kaggle fp16 (baseline known-good), DSMLP for
 training only — but training needs clean generation regardless, so fix it either way.
+
+---
+
+## 2026-06-08 — Discriminator #1: dtype RULED OUT. Verified prompt/model match. V0 next.
+
+**fp16 result (baseline ×40):** `no</think>` **23/40 (57.5%)** vs the bf16 control 20/40;
+accuracy 8/40 vs 7/40. Both within noise → **dtype is NOT the cause; float16 degenerates
+identically.** This *disproves* the prior memory's root-cause attribution
+([[project_dsmlp_not_kaggle_proxy]] blamed bf16) — it never controlled for the engine.
+
+**Verified the probe matches the known-good `run_inference.py` (0.581/0.660) on the other
+axes** (so we don't chase a phantom): model_id identical
+(`TrevorDuong/qwen3-4b-thinking-grpo-pass2`); baseline `SYSTEM_PROMPT_MATH` byte-identical;
+sampling identical (T0.6/top_p0.95/top_k20/min_p0, max_tokens 8192, max_model_len 10240);
+`repetition_penalty` absent in both. **The single remaining divergence is the engine: V0
+(run_inference, `VLLM_USE_V1=0`) vs V1 (probe default).** Corroborating clue from the V1
+log: `FlashInfer not available → PyTorch-native top-p/top-k sampling`. The collapse is a
+*coherent-then-repetition-at-length* pattern (e.g. id 217: ~14k chars of real work, then a
+`0 0 0` tail) — consistent with a sampling-path difference, and the known-good 54% was
+produced on V0.
+
+**Next — discriminator #2:** `scripts/launch_exp040_v0_check.sh` runs baseline ×40 under
+**float16 + V0** (`PROBE_V0=1` → `VLLM_USE_V1=0`), a full run_inference.py match. If
+`no</think>` collapses to ~0 and accuracy lifts toward Kaggle ~54% → the V1 sampler was the
+cause: set V0 in the probe and re-run the 4-arm probe for a clean PAL read. If V0 *also*
+degenerates ~50% → the degeneration is fundamental to DSMLP for this model → evaluate on
+Kaggle (known-good fp16+V0+T4), reserve DSMLP for training, and design Phase-2 GRPO to
+tolerate/curb the repetition. Tooling: `PROBE_V0` env switch in probe_run.py.
