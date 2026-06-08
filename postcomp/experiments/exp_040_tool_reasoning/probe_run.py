@@ -73,7 +73,10 @@ def main():
     from vllm import LLM, SamplingParams
 
     sample = load_dev_ff_sample()
-    conditions = CFG["probe"]["conditions"]
+    # Env overrides let a quick discriminator run a subset / different dtype without
+    # editing committed config (e.g. PROBE_CONDITIONS=baseline PROBE_DTYPE=float16).
+    conditions = (os.environ["PROBE_CONDITIONS"].split(",")
+                  if os.environ.get("PROBE_CONDITIONS") else CFG["probe"]["conditions"])
     print(f"[probe/gen] {len(sample)} dev FF questions x {len(conditions)} conditions "
           f"= {len(sample)*len(conditions)} generations", flush=True)
 
@@ -89,9 +92,11 @@ def main():
             tagged.append((cond, q["id"], q["answer"], ps))
 
     v = CFG["vllm"]
+    dtype = os.environ.get("PROBE_DTYPE") or v.get("dtype", "bfloat16")
+    print(f"[probe/gen] dtype={dtype} conditions={conditions}", flush=True)
     llm = LLM(
         model=CFG["model_id"],
-        dtype=v.get("dtype", "bfloat16"),
+        dtype=dtype,
         gpu_memory_utilization=v["gpu_memory_utilization"],
         max_model_len=v["max_model_len"],
         max_num_seqs=v["max_num_seqs"],
@@ -112,6 +117,12 @@ def main():
                      "raw": o.outputs[0].text.strip()})
     GEN_FILE.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
 
+    # Degeneration check (bug under diagnosis 2026-06-07): completions that never close
+    # </think> ran to the token budget and collapsed into repetition. ~50% on bf16/V1;
+    # this line is the discriminator readout when re-run under PROBE_DTYPE=float16.
+    no_close = sum(1 for r in rows if "</think>" not in r["raw"])
+    print(f"[probe/gen] degeneration check: {no_close}/{len(rows)} never closed </think> "
+          f"(dtype={dtype})", flush=True)
     print(f"[probe/gen] wrote {len(rows)} completions -> {GEN_FILE.name}", flush=True)
     print("[probe/gen] phase 1 done. Run probe_judge.py next "
           "(CPU-only; safe to run on the login node).", flush=True)

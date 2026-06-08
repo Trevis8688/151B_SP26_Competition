@@ -371,3 +371,72 @@ CPU post-processing touches it.** Both are now baked in.
     ```
   The generation checkpoints first; the judge can no longer hang 6h or lose the run.
   Paste the PROBE REPORT (+ any judge-timeout ids) and we read the gate.
+
+---
+
+## 2026-06-07 (cont.) — Probe ran CLEAN, gate "failed" — but in a DEGRADED regime. PAL verdict DEFERRED.
+
+### Infra: success
+The two-phase + `safe_judge` rebuild worked exactly as designed: **160/160 generated,
+checkpointed, all judged, ZERO judge timeouts, zero data loss, report printed.** bug-040
+and bug-041 are closed. The numbers below are trustworthy *as measurements of what the
+model did* — the problem is what the model did.
+
+### Headline report (40 dev-FF sample, 9 forced-recoverable + 31 random)
+| arm | acc | emitted | runnable | used_tool | code_after_think | net |
+|---|---|---|---|---|---|---|
+| baseline | 7/40 | — | — | — | — | — |
+| fullprec_A | 8/40 | — | — | — | — | +1 |
+| pal_nodemo | 5/40 | 12.5% | 7.5% | 0% | 7.5% | −2 |
+| pal_demo | 9/40 | 32.5% | 5.0% | 2.5% | 7.5% | +2 |
+
+GATE: FAIL (runnable ≪ 60%). But before concluding, error analysis overturned the
+premise.
+
+### The premise is broken: ~50% generation degeneration, NOT PAL-specific
+Reading the failing completions showed answer spans full of `0 0 0 0 …` / `\ \ \ …`
+repetition. Quantified across **all four** conditions: **~50% of completions never close
+`</think>`** (baseline 20/40, fullprec 25/40, pal_nodemo 19/40, pal_demo 20/40) — they run
+to the token budget and collapse into a repetition loop, emitting no answer. avg output
+≈ 11k chars; the degenerate ones hit 14k–25k chars (≈ the 8192-token cap).
+
+This is **condition-independent → environment, not prompt.** And baseline 7/40 (17.5%) vs
+the ~18/40 (~45%) expected from exp_018's 54% dev-FF is a ~2.5× shortfall — squarely on
+top of the documented **"DSMLP A5000+bf16 → longer chains; 24.6% vs 56.8% same model"**
+finding ([[project_dsmlp_not_kaggle_proxy]]). The probe measured the model in a degraded
+regime, so the accuracy numbers and every "net vs baseline" delta are **not comparable to
+the Kaggle 54% baseline.**
+
+### Diagnose against the known-good, not in the abstract
+Diffed the probe's generation setup vs `run_inference.py` (the pipeline that scored
+0.581/0.660). Two divergences:
+1. **dtype: `bfloat16` (probe) vs `float16` (run_inference).** ← prime suspect; the
+   memory specifically implicates A5000+bf16.
+2. **engine: V1 (vLLM 0.8.5 default) vs V0 (`VLLM_USE_V1=0`).**
+`repetition_penalty`/`presence_penalty` ruled OUT — neither pipeline sets them.
+
+### PAL verdict: DEFERRED (the "dead" evidence was contaminated)
+The completions first read as "malformed code / rambles about R" (ids 775, 888, 278, 203)
+were **every one a degeneration casualty** (`code_after_think=False`, `0 0 0` tails) — they
+say nothing about clean PAL capability. Conditioning on the ~20 pal_demo completions that
+*did* close `</think>`: ~13 emitted some code block (~65%) and ~3 put it in the answer span
+(~15%, not 7.5%). Discouraging, but **not a clean gate-fail, and not one non-degenerate PAL
+attempt's code has been inspected yet.** Holding the PAL verdict until generation is fixed —
+a clean read comes for free then.
+
+### This is a Phase-2 BLOCKER, not PAL cleanup
+Phase 2 (external-data GRPO) runs difficulty sampling (`sample_difficulty_v2.py`) and GRPO
+rollouts **on DSMLP**. At 50% degeneration the difficulty signal is exactly the documented
+"contaminates difficulty curricula" failure, and rollout quality is halved. **Fixing DSMLP
+generation is a hard prerequisite for the whole training arm, independent of PAL.** Success
+metric: DSMLP baseline accuracy approaching the Kaggle ~54%, not merely "fewer 0 0 0".
+
+### Next: cheapest single-variable discriminator (~8 min)
+Degeneration is condition-independent, so re-generate **baseline ×40 under `float16`** only
+and compare the `no</think>` rate (control 20/40) and accuracy (control 7/40). Tooling
+added: `PROBE_DTYPE` / `PROBE_CONDITIONS` env overrides in `probe_run.py`/`probe_judge.py`
+(no committed-config churn), a `no</think>` metric in the report, and
+`scripts/launch_exp040_dtype_check.sh`. If fp16 collapses `no</think>` to ~0 and lifts
+accuracy → flip config to float16. If not → add V0 (`VLLM_USE_V1=0`) to fully match
+run_inference.py. Reserve option: run eval on Kaggle fp16 (baseline known-good), DSMLP for
+training only — but training needs clean generation regardless, so fix it either way.

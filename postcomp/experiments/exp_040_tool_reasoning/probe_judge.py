@@ -26,6 +26,7 @@ Usage:
   python probe_judge.py /path/to/gens.jsonl # explicit input
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -52,7 +53,8 @@ def main():
         sys.exit(f"[probe/judge] missing {GEN_FILE} — run probe_run.py (phase 1) first.")
 
     gens = [json.loads(l) for l in open(GEN_FILE) if l.strip()]
-    conditions = CFG["probe"]["conditions"]
+    conditions = (os.environ["PROBE_CONDITIONS"].split(",")
+                  if os.environ.get("PROBE_CONDITIONS") else CFG["probe"]["conditions"])
     print(f"[probe/judge] {len(gens)} completions from {GEN_FILE.name}; "
           f"judge timeout={JUDGE_TO}s, tool timeout={TOOL_TO}s", flush=True)
 
@@ -62,7 +64,8 @@ def main():
     with open(OUT_FILE, "w") as fout:
         for i, g in enumerate(gens, 1):
             cond, qid, gold, text = g["condition"], g["id"], g["gold"], g["raw"]
-            rec = {"condition": cond, "id": qid, "gold": gold}
+            rec = {"condition": cond, "id": qid, "gold": gold,
+                   "no_think_close": "</think>" not in text}  # degeneration proxy
 
             if cond in ("pal_nodemo", "pal_demo"):
                 code = pal.last_code_block(text)
@@ -109,7 +112,9 @@ def main():
         if not cr:
             continue
         acc = sum(r["correct"] for r in cr)
-        rep = {"accuracy": acc, "accuracy_pct": round(100 * acc / len(cr), 1)}
+        rep = {"accuracy": acc, "accuracy_pct": round(100 * acc / len(cr), 1),
+               "no_think_close": sum(r.get("no_think_close", False) for r in cr),
+               "no_think_close_pct": round(100 * sum(r.get("no_think_close", False) for r in cr) / len(cr), 1)}
         if cond != "baseline":
             rep["recovery"] = sorted(r["id"] for r in cr if r["correct"] and not base.get(r["id"], False))
             rep["regression"] = sorted(r["id"] for r in cr if not r["correct"] and base.get(r["id"], False))
