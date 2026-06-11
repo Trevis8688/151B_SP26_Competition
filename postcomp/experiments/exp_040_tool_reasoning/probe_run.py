@@ -101,14 +101,21 @@ def main():
 
     v = CFG["vllm"]
     dtype = os.environ.get("PROBE_DTYPE") or v.get("dtype", "bfloat16")
-    print(f"[probe/gen] dtype={dtype} conditions={conditions}", flush=True)
+    # V0 engine has no chunked prefill -> requires max_num_batched_tokens >= max_model_len.
+    # The 8192 value is a V1-only bug-040 OOM workaround (V1 chunks the prefill); bump it
+    # for V0. Safe: 10240 < the 20480 that OOM'd, and V0 has no CUDA-graph pools (bug-040).
+    mnbt = v["max_num_batched_tokens"]
+    if os.environ.get("PROBE_V0") == "1" and mnbt < v["max_model_len"]:
+        mnbt = v["max_model_len"]
+    print(f"[probe/gen] dtype={dtype} v0={os.environ.get('PROBE_V0') == '1'} "
+          f"max_num_batched_tokens={mnbt} conditions={conditions}", flush=True)
     llm = LLM(
         model=CFG["model_id"],
         dtype=dtype,
         gpu_memory_utilization=v["gpu_memory_utilization"],
         max_model_len=v["max_model_len"],
         max_num_seqs=v["max_num_seqs"],
-        max_num_batched_tokens=v["max_num_batched_tokens"],
+        max_num_batched_tokens=mnbt,
         enforce_eager=v.get("enforce_eager", False),  # bug-040: frees CUDA-graph pools on A5000
         trust_remote_code=True,
     )
