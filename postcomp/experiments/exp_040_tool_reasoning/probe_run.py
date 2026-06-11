@@ -108,6 +108,7 @@ def main():
     if os.environ.get("PROBE_V0") == "1" and mnbt < v["max_model_len"]:
         mnbt = v["max_model_len"]
     print(f"[probe/gen] dtype={dtype} v0={os.environ.get('PROBE_V0') == '1'} "
+          f"attn={os.environ.get('VLLM_ATTENTION_BACKEND', 'auto')} "
           f"max_num_batched_tokens={mnbt} conditions={conditions}", flush=True)
     llm = LLM(
         model=CFG["model_id"],

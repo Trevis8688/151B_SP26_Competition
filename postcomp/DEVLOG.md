@@ -468,3 +468,46 @@ cause: set V0 in the probe and re-run the 4-arm probe for a clean PAL read. If V
 degenerates ~50% → the degeneration is fundamental to DSMLP for this model → evaluate on
 Kaggle (known-good fp16+V0+T4), reserve DSMLP for training, and design Phase-2 GRPO to
 tolerate/curb the repetition. Tooling: `PROBE_V0` env switch in probe_run.py.
+
+## 2026-06-11 — Discriminator #2 (V0 engine): NOT the cause. Advisor: one more (xformers) before declaring DSMLP fundamental
+
+**Disc #2 result (fp16 + V0, baseline ×40):** `degeneration check: 20/40 never closed </think>`,
+baseline accuracy 8/40 (20%). Engine log confirmed `V0 LLM engine`, `chunked_prefill_enabled=False`,
+`dtype=torch.float16`. The run now matched `run_inference.py` (0.581/0.660) on **every software
+axis** — model, byte-identical system prompt, sampling (T0.6/p0.95/k20/min_p0/8192), fp16, V0 —
+and still degenerates identically to the V1+bf16 control (20/40).
+
+| run | engine+dtype+attn | no-</think> | baseline acc |
+|---|---|---|---|
+| control | V1 + bf16 + FlashAttn | 20/40 | 7/40 |
+| disc #1 | V1 + fp16 + FlashAttn | 23/40 | 8/40 |
+| disc #2 | V0 + fp16 + FlashAttn | 20/40 | 8/40 |
+
+**Engine RULED OUT, dtype RULED OUT.** (bug-042 en route: V0 requires
+max_num_batched_tokens ≥ max_model_len — no chunked prefill; fixed in probe_run.py a46d16d.)
+
+**Advisor consult (branch decision):** do NOT declare "fundamental to DSMLP" yet. Disc #2 did
+not control the **attention backend** — A5000 auto-selects Flash Attention; Kaggle T4 (sm 7.5,
+no FA2) runs **xformers**. That is the highest-prior remaining divergence and exactly the axis
+the "DSMLP is not a Kaggle proxy" memory implicates. One more cheap run decides everything:
+
+- **Disc #3:** `VLLM_ATTENTION_BACKEND=XFORMERS` + fp16 + V0, baseline ×40
+  (`scripts/launch_exp040_xformers_check.sh`). VOID-CHECK: log must say "Using XFormers backend."
+- N→~0-4: backend was the cause → pin XFORMERS, re-run 4-arm probe on DSMLP; DSMLP salvaged
+  for ALL Phase-2 inference (rollouts, difficulty sampling).
+- N stays ~50%: NOW "fundamental to DSMLP numerics" is earned → PAL gate moves to Kaggle.
+
+**Advisor's other rulings (recorded for the branch):**
+1. **Kaggle port is right regardless** — the PAL verdict should ultimately be read in the
+   ground-truth environment (T4×2 fp16 V0). But port AFTER disc #3, and **pre-register a
+   clean-enough gate** before reading arms: baseline ≥35-40% on the (deliberately hard,
+   9-forced-error) 40-q sample AND no-</think> <15%. Porting pitfalls: safe_judge must use
+   process-group kill (`start_new_session=True` + `os.killpg`); PAL sandbox same discipline
+   (a generated infinite loop kills the commit otherwise); checkpoint write outside any
+   per-rank path under TP=2; test 2-3 q interactive before Save&RunAll.
+2. **Phase-2 NOT poisoned:** champion-era GRPO rollouts were ≤4096 completion — the collapse
+   is an 8192-tail phenomenon, so pass-2 is not retroactively invalidated. If disc #3 fails:
+   keep the ≤4096 cap, add a repetition/no-</think> penalty to the reward, and **filter
+   degenerate rollouts out of any difficulty curriculum before scoring** (a prompt that looks
+   "hard" because the rollout degenerated mis-ranks the curriculum). Optional near-free
+   evidence: grep pass-2 training logs for completion-length/repetition distribution.
